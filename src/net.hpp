@@ -1,5 +1,5 @@
 #ifndef NET_HPP
-#define NET_HP
+#define NET_HPP
 
 #include <unistd.h>
 
@@ -71,7 +71,7 @@ struct applied_native_protocol {
 
 class nstream final {
    public:
-    nstream(asio::io_context& io, asio::ip::address_v4 addr,
+    nstream(asio::io_context& io, asio::ip::address addr,
             asio::ip::port_type port)
         : sock(io), p(addr, port), i_address(get_default_interface_address()) {
         sock.open(p.protocol(), ec);
@@ -123,7 +123,7 @@ class nstream final {
     }
 
    private:
-    static asio::ip::address_v4 get_default_interface_address() {
+    static asio::ip::address get_default_interface_address() {
         FILE* pipe_ip_default =
             popen("ip route show default | awk '/default/ {print $9}'", "r");
 
@@ -134,13 +134,13 @@ class nstream final {
         if (auto it = ip_str.find_last_of("\n"); it != ip_str.npos)
             ip_str.erase(it, ip_str.size() - 1);
 
-        return asio::ip::make_address_v4(ip_str);
+        return asio::ip::make_address(ip_str);
     }
 
    private:
     asio::ip::udp::socket sock;
     asio::ip::udp::endpoint p;
-    asio::ip::address_v4 i_address;
+    asio::ip::address i_address;
 
     boost::system::error_code ec;
 };

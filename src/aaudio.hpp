@@ -41,9 +41,8 @@ class audio {
                                   period_size = 256,
                                   buffer_size = period_size * channels * 2;
 
-   protected:
-    snd_pcm_t* pcm_handle = nullptr;
-    snd_pcm_stream_t mode;
+    static constexpr unsigned int period_time =
+        (buffer_size / (sample_rate * channels * 2)) * 1000;
 
    protected:
     static constexpr snd_pcm_access_t access = SND_PCM_ACCESS_RW_INTERLEAVED;
@@ -53,6 +52,10 @@ class audio {
 
    private:
     static unsigned int counter_astream;
+
+   protected:
+    snd_pcm_t* pcm_handle = nullptr;
+    snd_pcm_stream_t mode;
 };
 audio::audio(snd_pcm_stream_t _mode) : mode(_mode) {
     try {
