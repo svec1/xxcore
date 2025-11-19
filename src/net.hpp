@@ -3,6 +3,8 @@
 
 #include <array>
 #include <boost/asio.hpp>
+#include <chrono>
+#include <print>
 
 using namespace boost;
 
@@ -13,10 +15,10 @@ static constexpr ipv IPV6 = ipv::v6;
 
 template <typename T>
 struct applied_native_protocol {
-    static constexpr void prepare(T& pckt) {}
-    static constexpr void was_accepted(T& pckt) { printf("sdf\n"); }
+    using cfunction_t = void(T&);
 
-    using cfunction_t = decltype(prepare);
+    constexpr virtual void prepare(T& pckt) {}
+    constexpr virtual void was_accepted(T& pckt) {}
 };
 
 template <unsigned int _buffer_size = 4096>
@@ -38,17 +40,51 @@ struct packet_native_t {
     buffer_t buffer;
 };
 
-template <
-    typename T = packet_native_t<>,
-    typename _aprotocol = applied_native_protocol<T>,
-    typename = std::enable_if_t<
-        std::is_base_of_v<packet_native_t<T::buffer_size>, T>, T>,
-    typename = std::void_t<
-        typename _aprotocol::cfunction_t,
-        std::enable_if_t<std::is_invocable_v<decltype(_aprotocol::prepare),
-                                             decltype(std::declval<T&>())> &&
-                         std::is_invocable_v<decltype(_aprotocol::was_accepted),
-                                             decltype(std::declval<T&>())>>>>
+template <unsigned int _buffer_size>
+struct debug_extention {
+    struct packet_t : public packet_native_t<_buffer_size> {
+        unsigned long long mark_time;
+    };
+
+    struct protocol : public applied_native_protocol<packet_t> {
+        constexpr void prepare(packet_t& pckt) override {
+            pckt.mark_time =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count();
+        }
+        constexpr void was_accepted(packet_t& pckt) override {
+            static unsigned long long during_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count();
+
+            unsigned long long now_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count();
+
+            if (now_ms - during_ms > 1000) {
+                during_ms = now_ms;
+                std::println("[DEBUG PROTOCOL]: was recieved last packet {} ms",
+                             now_ms - pckt.mark_time);
+            }
+        }
+    };
+};
+
+template <typename T = packet_native_t<>,
+          typename _aprotocol = applied_native_protocol<T>,
+          typename = std::enable_if_t<
+              std::is_base_of_v<packet_native_t<T::buffer_size>, T>, void>,
+          typename = std::enable_if_t<
+              std::is_base_of_v<applied_native_protocol<T>, _aprotocol>, void>,
+          typename =
+              std::void_t<typename _aprotocol::cfunction_t,
+                          decltype(std::declval<_aprotocol&&>().prepare(
+                              std::declval<T&>())),
+                          decltype(std::declval<_aprotocol&&>().was_accepted(
+                              std::declval<T&>()))>>
 class packet final : public T {
    public:
     using packet_t = T;
@@ -62,9 +98,13 @@ class packet final : public T {
     packet(T&& pckg) : T(pckg) {}
 
    public:
-    static void prepare(packet_t& pckt) { aprotocol::prepare(pckt); }
-    static void was_accepted(packet_t& pckt) { aprotocol::was_accepted(pckt); }
+    static void prepare(packet_t& pckt) { aprotocol{}.prepare(pckt); }
+    static void was_accepted(packet_t& pckt) { aprotocol{}.was_accepted(pckt); }
 };
+
+template <unsigned int _buffer_size>
+using debug_packet = packet<typename debug_extention<_buffer_size>::packet_t,
+                            typename debug_extention<_buffer_size>::protocol>;
 
 template <ipv v = ipv::v4,
           typename _ipv_t = std::conditional_t<
@@ -127,7 +167,6 @@ class nstream final {
     receive_last(T& pckt, ipv_t addr) {
         std::span<typename T::buffer_el_t> buffer_tmp(pckt.get_buffer(),
                                                       T::size);
-
         asio::ip::udp::endpoint p_sender{addr, port};
 
         unsigned int size =

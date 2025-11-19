@@ -4,20 +4,18 @@
 #include <ainput.hpp>
 #include <aoutput.hpp>
 #include <net.hpp>
-#include <print>
 #include <thread>
 #include <vector>
 
 using namespace boost;
 
-template <typename T = packet_native_t<>,
-          typename aprotocol = applied_native_protocol<T>>
+template <typename T>
 class alsa_udp_voice_service {
    public:
     static constexpr ipv v = ipv::v4;
 
     using nstream_t = nstream<v>;
-    using package_t = packet<T, aprotocol>;
+    using package_t = T;
 
    public:
     alsa_udp_voice_service(const std::vector<nstream_t::ipv_t>& addrs,

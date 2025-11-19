@@ -4,6 +4,8 @@
 
 using namespace boost;
 
+using mpacket = debug_packet<audio::buffer_size * 4>;
+
 static asio::ip::address get_default_interface_address() {
     FILE* pipe_ip_default =
         popen("ip route show default | awk '/default/ {print $9}'", "r");
@@ -21,7 +23,7 @@ static asio::ip::address get_default_interface_address() {
 struct vcu_config {
     std::string_view device;
     asio::ip::port_type port;
-    std::vector<alsa_udp_voice_service<>::nstream_t::ipv_t> addrs;
+    std::vector<alsa_udp_voice_service<mpacket>::nstream_t::ipv_t> addrs;
 };
 
 static void parse_options(vcu_config& cfg, int argc, char* argv[]) {
@@ -105,7 +107,7 @@ int main(int argc, char* argv[]) {
         audio::device_capture = cfg.device;
         audio::device_playback = cfg.device;
 
-        alsa_udp_voice_service<> vsc(cfg.addrs, cfg.port);
+        alsa_udp_voice_service<mpacket> vsc(cfg.addrs, cfg.port);
     } catch (std::runtime_error& excp) {
         std::println("{}", excp.what());
         return 1;

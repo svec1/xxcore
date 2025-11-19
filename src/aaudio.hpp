@@ -38,7 +38,7 @@ class audio {
    public:
     static std::string_view device_capture, device_playback;
     static constexpr unsigned int sample_rate = 44100, channels = 2,
-                                  period_size = 256,
+                                  period_size = 512,
                                   buffer_size = period_size * channels * 2;
 
     static constexpr unsigned int period_time =
