@@ -172,12 +172,11 @@ class nstream final {
         unsigned int size =
             sock.receive_from(boost::asio::buffer(buffer_tmp), p_sender, 0, ec);
 
-        std::println("Expected {}, accepted {}", T::size, size);
         if (ec.value())
             throw std::runtime_error(
                 std::format("Failed to process packet({}).", ec.message()));
         else if (size != T::size)
-            throw std::runtime_error("The package arrived incomplete.");
+            throw std::runtime_error(std::format("The package arrived incomplete({}:{}).", size, T::size));
 
 
         T::was_accepted(pckt);

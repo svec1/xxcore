@@ -12,8 +12,8 @@ class audio : public base_audio<sio_hdl, sio_par>{
 	~audio();
 
     public:
-	void read(char* buffer, unsigned int period_size) override;
-	void write(char* buffer, unsigned int period_size) override;
+	void read(char* buffer) override;
+	void write(char* buffer) override;
 		
     private:
 	void init_handle() override;
@@ -26,14 +26,14 @@ class audio : public base_audio<sio_hdl, sio_par>{
 
 audio::audio(audio_stream_t _mode) { init(_mode); }
 audio::~audio(){ dump(); }
-void audio::read(char* buffer, unsigned int period_size){
+void audio::read(char* buffer){
     static int size = period_size*bits_per_sample*channels/8, ret;
     ret = sio_read(handle, buffer, size);
 
     if(ret <= 0)
 	    throw std::runtime_error("Error reading audio.");
 }
-void audio::write(char* buffer, unsigned int period_size){
+void audio::write(char* buffer){
     static int size = period_size*bits_per_sample*channels/8, ret;
     ret = sio_write(handle, buffer, size);
 

@@ -21,8 +21,8 @@ class audio : public base_audio<snd_pcm_t, snd_pcm_hw_params_t>{
     ~audio();
 
    public:
-    void read(char* buffer, unsigned int period_size) override;
-    void write(char* buffer, unsigned int period_size) override;
+    void read(char* buffer) override;
+    void write(char* buffer) override;
 
    private:
     void init_handle() override;
@@ -51,19 +51,23 @@ audio::audio(audio_stream_t _mode) {
 audio::~audio() {
 	dump();
 }
-void audio::read(char* buffer, unsigned int period_size) {
-     static int ret;
+void audio::read(char* buffer) {
+	static int ret;
      while ((ret = snd_pcm_readi(handle, buffer, period_size)) < 0)
             snd_call(snd_pcm_prepare, handle);
 }
-void audio::write(char* buffer, unsigned int period_size) {
+void audio::write(char* buffer) {
      static int ret;
      while ((ret = snd_pcm_writei(handle, buffer, period_size)) < 0)
             snd_call(snd_pcm_prepare, handle);
 }
 void audio::init_handle() {
-    snd_call(snd_pcm_open, &handle,
-             (mode == audio_stream_t::playback ? device_playback : device_capture).data(), mode == audio_stream_t::playback ? snd_pcm_stream_t::SND_PCM_STREAM_PLAYBACK ? snd_pcm_stream_t::SND_PCM_STREAM_CAPTURE, 0);
+    switch(mode){
+	    case audio_stream_t::playback:
+	        snd_call(snd_pcm_open, &handle, device_playback.data(), SND_PCM_STREAM_PLAYBACK, 0);
+	    case audio_stream_t::capture:
+	        snd_call(snd_pcm_open, &handle, device_capture.data(), SND_PCM_STREAM_CAPTURE, 0);
+    }
 }
 void audio::init_params() {
     static snd_pcm_uframes_t pcm_period_size = 940;
@@ -84,7 +88,7 @@ void audio::init_sound_device(){
     snd_call(snd_pcm_prepare, handle);
 }
 void audio::dump_handle(){
-    snd_pcm_close(pcm_handle);
+    snd_pcm_close(handle);
 } 
 void audio::dump_params(){
     snd_pcm_hw_params_free(params);

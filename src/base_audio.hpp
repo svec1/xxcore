@@ -26,8 +26,8 @@ class base_audio{
      virtual void dump_params() = 0;
 
     public:
-     virtual void read(char* buffer, unsigned int period_size) = 0;
-     virtual void write(char* buffer, unsigned int period_size) = 0;
+     virtual void read(char* buffer) = 0;
+     virtual void write(char* buffer) = 0;
 
     public:
      static constexpr std::string_view default_device_playback = "default";
