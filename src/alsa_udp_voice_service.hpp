@@ -1,11 +1,10 @@
 #ifndef ALSA_UDP_VOICE_SERVICE_HPP
 #define ALSA_UDP_VOICE_SERVICE_HPP
 
-#include <thread>
-#include <vector>
-
 #include <aio.hpp>
 #include <net.hpp>
+#include <thread>
+#include <vector>
 
 using namespace boost;
 

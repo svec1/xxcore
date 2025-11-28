@@ -48,7 +48,7 @@ struct debug_extention {
 
     struct protocol : public applied_native_protocol<packet_t> {
         constexpr void prepare(packet_t& pckt) override {
-	   pckt.mark_time =
+            pckt.mark_time =
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::system_clock::now().time_since_epoch())
                     .count();
@@ -123,6 +123,8 @@ class nstream final {
    public:
     nstream(asio::io_context& io, asio::ip::port_type _port)
         : sock(io), port(_port) {
+        boost::system::error_code ec;
+
         sock.open(udp(), ec);
         if (ec.value())
             throw std::runtime_error(
@@ -168,6 +170,7 @@ class nstream final {
         std::span<typename T::buffer_el_t> buffer_tmp(pckt.get_buffer(),
                                                       T::size);
         asio::ip::udp::endpoint p_sender{addr, port};
+        boost::system::error_code ec;
 
         unsigned int size =
             sock.receive_from(boost::asio::buffer(buffer_tmp), p_sender, 0, ec);
@@ -176,8 +179,8 @@ class nstream final {
             throw std::runtime_error(
                 std::format("Failed to process packet({}).", ec.message()));
         else if (size != T::size)
-            throw std::runtime_error(std::format("The package arrived incomplete({}:{}).", size, T::size));
-
+            throw std::runtime_error(std::format(
+                "The package arrived incomplete({}:{}).", size, T::size));
 
         T::was_accepted(pckt);
     }
@@ -185,8 +188,6 @@ class nstream final {
    private:
     asio::ip::udp::socket sock;
     asio::ip::port_type port;
-
-    boost::system::error_code ec;
 };
 
 #endif

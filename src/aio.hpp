@@ -29,14 +29,13 @@ class input : private audio {
     std::array<byte, audio::buffer_size> get_samples();
 };
 
-
 output::output() : audio(audio_stream_t::playback) {}
 void output::play_samples(std::span<byte> bytes) {
-    int ret, writed_bytes = 0;
+    int writed_bytes = 0;
 
     while (writed_bytes < bytes.size()) {
         write(bytes.data() + writed_bytes);
-	writed_bytes += period_size * channels * 2;
+        writed_bytes += period_size * channels * 2;
     }
 }
 

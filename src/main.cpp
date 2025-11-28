@@ -91,11 +91,12 @@ static void parse_options(vcu_config& cfg, int argc, char* argv[]) {
 }
 
 void print_cfg(const vcu_config& cfg) {
-    std::println("ID Sound device: {}", cfg.device);
-    std::println("Listening port: {}", cfg.port);
-    std::println("Possible contact addresses:");
-    std::for_each(cfg.addrs.begin(), cfg.addrs.end(),
-                  [](auto& addr) { std::println("{}", addr.to_string()); });
+    std::println("-- Sound device: {}", cfg.device);
+    std::println("-- Listening port: {}", cfg.port);
+    std::println("-- Possible contact addresses:");
+    std::for_each(cfg.addrs.begin(), cfg.addrs.end(), [](auto& addr) {
+        std::println("   | {}", addr.to_string());
+    });
 }
 
 int main(int argc, char* argv[]) {
