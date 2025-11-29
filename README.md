@@ -1,2 +1,2 @@
-# alsa-udp-voice
+# unix-udp-voice
 Simple voice interaction on the network.
