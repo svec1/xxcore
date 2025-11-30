@@ -89,19 +89,12 @@ struct debug_extention {
     };
 };
 
-template <
-    typename T = packet_native_t<>,
-    typename _aprotocol = applied_native_protocol<T>,
-    typename = std::enable_if_t<
-        std::is_base_of_v<packet_native_t<T::buffer_size>, T>, void>,
-    typename = std::enable_if_t<
-        std::is_base_of_v<applied_native_protocol<T>, _aprotocol>, void>,
-    typename = std::void_t<
-        typename _aprotocol::cfunction_t,
-        decltype(std::declval<_aprotocol&&>().prepare(
-            std::declval<T&>(), std::declval<const asio::ip::address&>())),
-        decltype(std::declval<_aprotocol&&>().was_accepted(
-            std::declval<T&>(), std::declval<const asio::ip::address&>()))>>
+template <typename T = packet_native_t<>,
+          typename _aprotocol = applied_native_protocol<T>,
+          typename = std::enable_if_t<
+              std::is_base_of_v<packet_native_t<T::buffer_size>, T>, void>,
+          typename = std::enable_if_t<
+              std::is_base_of_v<applied_native_protocol<T>, _aprotocol>, void>>
 class packet final : public T {
    public:
     using packet_t = T;

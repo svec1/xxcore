@@ -4,7 +4,7 @@
 #include <sndio.h>
 
 #include <base_audio.hpp>
-#include <print>
+#include <cstring>
 
 class audio : public base_audio<sio_hdl, sio_par> {
    public:
@@ -28,6 +28,7 @@ audio::audio(audio_stream_t _mode) { init(_mode); }
 audio::~audio() { dump(); }
 void audio::read(char* buffer) {
     static int size = period_size * bits_per_sample * channels / 8, ret;
+    std::memset(buffer, 0, size);
     ret = sio_read(handle, buffer, size);
 
     if (ret <= 0) throw std::runtime_error("Error reading audio.");
@@ -56,7 +57,6 @@ void audio::init_params() {
     params_g.bits = bits_per_sample;
     params_g.sig = 1;
     params_g.le = SIO_LE_NATIVE;
-    params_g.rchan = channels;
     params_g.pchan = channels;
     params_g.rate = sample_rate;
 
@@ -68,6 +68,9 @@ void audio::init_sound_device() {
     if (!sio_start(handle))
         throw std::runtime_error("Failed to start audio device.");
 }
-void audio::dump_handle() { sio_close(handle); }
+void audio::dump_handle() {
+    sio_stop(handle);
+    sio_close(handle);
+}
 void audio::dump_params() {}
 #endif
