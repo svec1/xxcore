@@ -2,53 +2,47 @@
 #define AIO_HPP
 
 #if defined(ALSA)
-#define AR_NAME_D "ALSA";
+#define ARSND_NAME_D "ALSA"
+#define ARSND_NAME_SIZE_D 4
 #include <alsa_audio.hpp>
 #elif defined(SNDIO)
-#define AR_NAME_D "SNDIO";
-#include <sio_audio.hpp>
+#define ARSND_NAME_D "SNDIO"
+#define ARSND_NAME_SIZE_D 5 
+#include <sndio_audio.hpp>
 #elif defined(OSS)
-#define AR_NAME_D "OSS"
+#define ARSND_NAME_D "OSS"
+#define ARSND_NAME_SIZE_D 4
 #include <oss_audio.hpp>
 #endif
 
 #include <array>
 #include <span>
 
-using byte = char;
-
-static constexpr auto AR_NAME = AR_NAME_D;
-
-class output : private audio {
-   public:
-    output();
-
-   public:
-    void play_samples(std::span<byte> bytes);
-};
 class input : private audio {
    public:
     input();
 
    public:
-    std::array<byte, audio::buffer_size> get_samples();
+    audio::buffer_t get_samples();
+};
+class output : private audio {
+   public:
+    output();
+
+   public:
+    void play_samples(const audio::buffer_t& bytes);
 };
 
-output::output() : audio(audio_stream_t::playback) {}
-void output::play_samples(std::span<byte> bytes) {
-    int writed_bytes = 0;
-
-    while (writed_bytes < bytes.size()) {
-        write(bytes.data() + writed_bytes);
-        writed_bytes += period_size * channels * 2;
-    }
+input::input() : audio(audio_stream_t::capture) {}
+audio::buffer_t input::get_samples() {
+    audio::buffer_t bytes;
+    read(bytes);
+    return bytes;
 }
 
-input::input() : audio(audio_stream_t::capture) {}
-std::array<byte, audio::buffer_size> input::get_samples() {
-    std::array<byte, audio::buffer_size> bytes;
-    read(bytes.data());
-    return bytes;
+output::output() : audio(audio_stream_t::playback) {}
+void output::play_samples(const audio::buffer_t& bytes) {
+    write(bytes);
 }
 
 #endif

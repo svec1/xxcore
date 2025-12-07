@@ -4,7 +4,6 @@
 #include <aio.hpp>
 #include <net.hpp>
 #include <thread>
-#include <vector>
 
 using namespace boost;
 
@@ -45,17 +44,20 @@ unix_udp_voice_service<T>::unix_udp_voice_service(
 }
 template <typename T>
 void unix_udp_voice_service<T>::run(const std::span<nstream_t::ipv_t>& addrs) {
-    std::vector<std::thread> ts_receivers;
+    if(addrs.size() > package_t::max_count_senders)
+	throw noheap::runtime_error("The senders IP limit has been exceeded: {}.", package_t::max_count_senders);    
+
+    noheap::vector_stack<std::thread, package_t::max_count_senders> ts_receivers;
     std::for_each(
         addrs.begin(), addrs.end(), [&](const nstream_t::ipv_t& addr) {
-            ts_receivers.emplace_back(this->receive_samples, std::ref(net),
+            ts_receivers.data.emplace_back(this->receive_samples, std::ref(net),
                                       std::ref(out), std::cref(addr));
         });
     std::thread sender(this->send_samples, std::ref(net), std::ref(in),
                        std::cref(addrs));
 
     sender.join();
-    std::for_each(ts_receivers.begin(), ts_receivers.end(),
+    std::for_each(ts_receivers.data.begin(), ts_receivers.data.end(),
                   [&](auto& t_receiver) { t_receiver.detach(); });
 }
 template <typename T>
@@ -64,18 +66,18 @@ void unix_udp_voice_service<T>::send_samples(
     try {
         static package_t pckg;
         while (true) {
-            for (unsigned int i = 0;
+            for (std::size_t i = 0;
                  i < package_t::buffer_size / audio::buffer_size; ++i) {
-                const auto arr = in.get_samples();
-                std::copy(arr.begin(), arr.end(),
+                const auto buffer_tmp = in.get_samples();
+                std::copy(buffer_tmp.begin(), buffer_tmp.end(),
                           pckg.buffer.begin() + i * audio::buffer_size);
             }
             std::for_each(addrs.begin(), addrs.end(), [&](auto& addr) {
                 net.send_to(std::move(pckg), addr);
             });
         }
-    } catch (std::runtime_error& excp) {
-        std::println("{}", excp.what());
+    } catch (noheap::runtime_error& excp) {
+        noheap::println("{}", excp.what());
         exit(1);
     }
 }
@@ -86,10 +88,15 @@ void unix_udp_voice_service<T>::receive_samples(nstream_t& net, output& out,
         static package_t pckg;
         while (true) {
             net.receive_last(pckg, addr);
-            out.play_samples(pckg.buffer);
+            for (std::size_t i = 0;
+                 i < package_t::buffer_size / audio::buffer_size; ++i) {
+		audio::buffer_t buffer_tmp;
+		std::copy(pckg.buffer.begin() + i * audio::buffer_size, pckg.buffer.begin() + (i+1) * audio::buffer_size, buffer_tmp.begin());
+            	out.play_samples(buffer_tmp);
+	    }
         }
-    } catch (std::runtime_error& excp) {
-        std::println("{}", excp.what());
+    } catch (noheap::runtime_error& excp) {
+        noheap::println("{}", excp.what());
         exit(1);
     }
 }

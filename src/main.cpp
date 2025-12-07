@@ -1,34 +1,32 @@
-#include <unistd.h>
-
 #include <unix_udp_voice_service.hpp>
+
+static constexpr std::size_t max_count_senders = 512;
 
 using namespace boost;
 
-using mpacket = debug_packet<audio::buffer_size>;
+using mpacket = debug_packet<audio::buffer_size, max_count_senders>;
 using uuv_service = unix_udp_voice_service<mpacket>;
 
 struct vcu_config {
     std::string_view device;
     asio::ip::port_type port;
-    std::vector<uuv_service::nstream_t::ipv_t> addrs;
+    noheap::vector_stack<uuv_service::nstream_t::ipv_t, mpacket::max_count_senders> addrs;
 };
 
 static void parse_options(vcu_config& cfg, int argc, char* argv[]) {
-    static constexpr auto throw_usage = [](std::string_view arg,
+    static constexpr auto throw_usage = [](auto arg,
                                            int expected_argument = 0) {
-        std::string throw_string;
+	noheap::runtime_error::buffer_t buffer;	
 
+	auto end_it = std::format_to(buffer.begin(), "Usage: alsa_tcp_voice [-D sound device] [-h IP Host] [-p port]\n");
         if (expected_argument == 1)
-            throw_string = std::format("Option requires an argument: {}", arg);
+            end_it = std::format_to(end_it, "Option requires an argument: {}", arg);
         else if (expected_argument == -1)
-            throw_string = std::format("Invalid argument: {}", arg);
+            end_it = std::format_to(end_it, "Invalid argument: {}", arg);
         else
-            throw_string = std::format("Invalid option: {}", arg);
-
-        throw std::runtime_error(std::format(
-            "{}\n"
-            "Usage: alsa_tcp_voice [-D sound device] [-h IP Host] [-p port]",
-            throw_string));
+            end_it = std::format_to(end_it, "Invalid option: {}", arg);
+	
+        throw noheap::runtime_error(std::move(buffer));
     };
 
     static constexpr auto get_argument = [](int argc, char* argv[], int& i) {
@@ -57,10 +55,10 @@ static void parse_options(vcu_config& cfg, int argc, char* argv[]) {
                     break;
                 }
                 case 'h': {
-                    auto addr = asio::ip::make_address_v4(current_value);
-                    if (std::find(cfg.addrs.begin(), cfg.addrs.end(), addr) ==
-                        cfg.addrs.end())
-                        cfg.addrs.push_back(addr);
+		    auto addr = asio::ip::make_address_v4(current_value);
+                    if (std::find(cfg.addrs.data.begin(), cfg.addrs.data.end(), addr) ==
+                        cfg.addrs.data.end())
+                        cfg.addrs.data.push_back(addr);
                     break;
                 }
                 case 'p': {
@@ -68,7 +66,7 @@ static void parse_options(vcu_config& cfg, int argc, char* argv[]) {
                     break;
                 }
                 default:
-                    throw_usage(std::string("-") + option[1]);
+                    throw_usage(option[1]);
             }
         } catch (system::system_error&) {
             throw_usage(current_value, -1);
@@ -77,12 +75,12 @@ static void parse_options(vcu_config& cfg, int argc, char* argv[]) {
 }
 
 void print_cfg(const vcu_config& cfg) {
-    std::println("-- Sound architecture: {}", AR_NAME);
-    std::println("-- Sound device: {}", cfg.device);
-    std::println("-- Listening port: {}", cfg.port);
-    std::println("-- Possible contact addresses:");
-    std::for_each(cfg.addrs.begin(), cfg.addrs.end(), [](auto& addr) {
-        std::println("   | {}", addr.to_string());
+    noheap::println("-- Sound architecture: {}", audio::arsnd_name);
+    noheap::println("-- Sound device: {}", cfg.device);
+    noheap::println("-- Listening port: {}", cfg.port);
+    noheap::println("-- Possible contact addresses:");
+    std::for_each(cfg.addrs.data.begin(), cfg.addrs.data.end(), [](auto& addr) {
+        noheap::println("   | {}", addr.to_string());
     });
 }
 
@@ -96,9 +94,9 @@ int main(int argc, char* argv[]) {
         audio::device_playback = cfg.device;
         audio::device_capture = cfg.device;
 
-        uuv_service vsc(cfg.addrs, cfg.port);
-    } catch (std::runtime_error& excp) {
-        std::println("{}", excp.what());
+        uuv_service vsc(cfg.addrs.data, cfg.port);
+    } catch (std::exception& excp) {
+        noheap::println("{}", excp.what());
         return 1;
     }
 
