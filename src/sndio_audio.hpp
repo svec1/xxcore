@@ -10,7 +10,7 @@ class audio : public base_audio<sio_hdl*, sio_par> {
     audio(audio_stream_t mode);
     ~audio() override;
 
-   public:
+   protected:
     void pread(char* buffer) override;
     void pwrite(const char* buffer) override;
 
@@ -18,10 +18,10 @@ class audio : public base_audio<sio_hdl*, sio_par> {
     void init_handle() override;
     void init_params() override;
     void init_sound_device() override;
-
     void dump_handle() override;
 
-    bool init_handle_success() override;
+    void start_audio() override;
+    void stop_audio() override;
 };
 
 audio::audio(audio_stream_t _mode) { init(_mode); }
@@ -40,7 +40,7 @@ void audio::pwrite(const char* buffer) {
 }
 void audio::init_handle() {
     switch (mode) {
-        default:
+	default:
         case audio_stream_t::playback:
             handle = sio_open(device_playback.data(), SIO_PLAY, 0);
             break;
@@ -51,28 +51,36 @@ void audio::init_handle() {
             handle = sio_open(device_playback.data(), SIO_PLAY | SIO_REC, 0);
             break;
     }
+    
+    handle_initialized = handle != NULL;
 }
 void audio::init_params() {
     sio_initpar(&params);
 
     params.bits = bits_per_sample;
+    params.bps = bits_per_sample/8;
     params.sig = 1;
     params.le = SIO_LE_NATIVE;
     params.pchan = channels;
+    params.rchan = channels;
     params.rate = sample_rate;
 }
 void audio::init_sound_device() {
     if (!sio_setpar(handle, &params))
         throw_error("Failed to set audio params.");
+}
+void audio::dump_handle() {
+    sio_close(handle);
+}
+void audio::start_audio() { 
+    base_audio<sio_hdl*, sio_par>::start_audio();
     if (!sio_start(handle))
         throw_error("Failed to start audio device.");
 }
-void audio::dump_handle() {
-    sio_stop(handle);
-    sio_close(handle);
-}
-bool audio::init_handle_success() {
-    return static_cast<bool>(handle);
+void audio::stop_audio() { 
+    base_audio<sio_hdl*, sio_par>::stop_audio();
+    if (!sio_stop(handle))
+        throw_error("Failed to stop audio device.");
 }
 
 #endif

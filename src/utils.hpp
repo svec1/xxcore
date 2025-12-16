@@ -10,24 +10,47 @@
 #include <cstdio>
 #include <string_view>
 
+#include <unistd.h>
+
 namespace noheap{
 
-template<typename... Args>
-void println(std::format_string<Args...> format, Args&&... args){
-    static constexpr std::size_t buffer_size = 512;   
-    std::array<char, buffer_size> buffer;
-    std::fill_n(buffer.begin(), buffer_size, 0);
-    
-    auto end_it = std::format_to(buffer.begin(), format, std::forward<Args>(args)...); 
-    *end_it = '\n';
-    *(end_it+1) = '\0';
+static constexpr std::size_t output_buffer_size = 512;
 
-    std::printf("%s", buffer.data()); 
+class print_impl{
+   public:
+	static constexpr std::size_t buffer_size = output_buffer_size;   
+    	using buffer_t = std::array<char, buffer_size>;
+   
+   public:
+	template<char end_ch, typename... Args>
+	static void out(std::format_string<Args...> format, Args&&... args){
+            buffer_t buffer; 
+    	    std::fill_n(buffer.begin(), buffer_size, 0);
+    
+            auto end_it = std::format_to(buffer.begin(), format, std::forward<Args>(args)...); 
+    	    *end_it = end_ch;
+
+	    out_buffer(std::move(buffer));		
+	}
+		
+	static void out_buffer(buffer_t&& buffer){
+	    ::write(1, buffer.data(), buffer_size); 
+	}
+
+};
+
+template<typename... Args>
+constexpr void print(std::format_string<Args...> format, Args&&... args){
+    print_impl::out<'\0'>(format, std::forward<Args>(args)...); 
+}
+template<typename... Args>
+constexpr void println(std::format_string<Args...> format, Args&&... args){
+    print_impl::out<'\n'>(format, std::forward<Args>(args)...); 
 }
 
 class runtime_error : public std::exception{
-   public:	
-	static constexpr std::size_t buffer_size = 512;   
+   public:
+	static constexpr std::size_t buffer_size = output_buffer_size;   
 	using buffer_t = std::array<char, buffer_size>;
 
    public:
@@ -58,12 +81,12 @@ class monotonic_buffer_resource_static final : public std::pmr::memory_resource{
 	
    protected:
 	void* do_allocate(std::size_t bytes, std::size_t alignment){
-	    static constexpr auto find_alignment_bytes = [](std::size_t offset, std::size_t alignment){
+	    static constexpr auto calc_alignment_bytes = [](std::size_t offset, std::size_t alignment){
 	    	std::size_t offset_end = offset;
 		while(offset_end % alignment) offset_end += offset_end % alignment;
 		return offset_end-offset; 
 	    };
-	    const std::size_t bytes_alignment = find_alignment_bytes(offset, alignment);	
+	    const std::size_t bytes_alignment = calc_alignment_bytes(offset, alignment);
 	     
 	    offset += bytes+bytes_alignment;
 

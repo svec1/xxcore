@@ -9,10 +9,18 @@
 #define ARSND_NAME_D "SNDIO"
 #define ARSND_NAME_SIZE_D 5 
 #include <sndio_audio.hpp>
-#elif defined(OSS)
-#define ARSND_NAME_D "OSS"
-#define ARSND_NAME_SIZE_D 4
+#elif defined(FREEBSD_AUDIO)
+#define ARSND_NAME_D "FREEBSD_AUDIO"
+#define ARSND_NAME_SIZE_D 13 
 #include <oss_audio.hpp>
+#elif defined(OPENBSD_AUDIO)
+#define ARSND_NAME_D "OPENBSD_AUDIO"
+#define ARSND_NAME_SIZE_D 13 
+#include <openbsd_audio.hpp>
+#elif defined(NETBSD_AUDIO)
+#define ARSND_NAME_D "NETBSD_AUDIO"
+#define ARSND_NAME_SIZE_D 12
+#include <netbsd_audio.hpp>
 #endif
 
 #include <array>

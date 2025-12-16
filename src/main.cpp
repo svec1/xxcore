@@ -1,6 +1,6 @@
 #include <unix_udp_voice_service.hpp>
 
-static constexpr std::size_t max_count_senders = 512;
+static constexpr std::size_t max_count_senders = 64;
 
 using namespace boost;
 
@@ -95,7 +95,7 @@ int main(int argc, char* argv[]) {
         audio::device_capture = cfg.device;
 
         uuv_service vsc(cfg.addrs.data, cfg.port);
-    } catch (std::exception& excp) {
+    } catch (noheap::runtime_error& excp) {
         noheap::println("{}", excp.what());
         return 1;
     }
