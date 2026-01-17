@@ -1,18 +1,16 @@
 #include "unix_udp_voice_service.hpp"
 
-static constexpr std::size_t max_count_senders = 16;
-static constexpr log_handler log{{}};
+static constexpr std::size_t max_count_addrs = 16;
+static constexpr log_handler log_main{{}};
 
 using namespace boost;
 
-using mpacket = debug_packet<audio::buffer_size, max_count_senders>;
-using uuv_service = unix_udp_voice_service<mpacket>;
+using uuv_service = unix_udp_voice_service<max_count_addrs>;
 
 struct vcu_config {
     std::string_view device;
     asio::ip::port_type port;
-    noheap::vector_stack<uuv_service::nstream_t::ipv_t,
-                         mpacket::max_count_senders>
+    noheap::monotonic_array<uuv_service::nstream_t::ipv_t, max_count_addrs>
         addrs;
 };
 
@@ -73,9 +71,13 @@ static void parse_options(vcu_config &cfg, int argc, char *argv[]) {
             }
             case 'h': {
                 auto addr = asio::ip::make_address_v4(current_value);
-                if (std::find(cfg.addrs.data.begin(), cfg.addrs.data.end(),
-                              addr) == cfg.addrs.data.end())
-                    cfg.addrs.data.push_back(addr);
+                if (std::find(cfg.addrs.begin(), cfg.addrs.end(), addr) ==
+                    cfg.addrs.end()) {
+                    if (cfg.addrs.size() == max_count_addrs)
+                        throw_usage(current_value, -1);
+
+                    cfg.addrs.push_back(addr);
+                }
                 break;
             }
             case 'p': {
@@ -92,18 +94,17 @@ static void parse_options(vcu_config &cfg, int argc, char *argv[]) {
 }
 
 void print_cfg(const vcu_config &cfg) {
-    log.to_console(" -- Sound architecture: {}", audio::arsnd_name);
-    log.to_console(" -- Sound device: {}", cfg.device);
-    log.to_console(" -- Listening port: {}", cfg.port);
-    log.to_console(" -- Possible contact addresses:");
-    std::for_each(cfg.addrs.data.begin(), cfg.addrs.data.end(), [](auto &addr) {
-        log.to_console("    | {}", addr.to_string());
+    log_main.to_console(" -- Sound architecture: {}", audio::arsnd_name);
+    log_main.to_console(" -- Sound device: {}", cfg.device);
+    log_main.to_console(" -- Listening port: {}", cfg.port);
+    log_main.to_console(" -- Possible contact addresses:");
+    std::for_each(cfg.addrs.begin(), cfg.addrs.end(), [](auto &addr) {
+        log_main.to_console("    | {}", addr.to_string());
     });
 }
 
 int main(int argc, char *argv[]) {
     try {
-
         vcu_config cfg = {.device = audio::default_device_playback,
                           .port = 8888};
         parse_options(cfg, argc, argv);
@@ -112,13 +113,12 @@ int main(int argc, char *argv[]) {
         audio::device_playback = cfg.device;
         audio::device_capture = cfg.device;
 
-        uuv_service vsc(cfg.addrs.data, cfg.port);
+        uuv_service vsc(cfg.addrs, cfg.port);
     } catch (noheap::runtime_error &excp) {
-        if (excp.has_setting_owner())
-            log.to_all_with_subowner(excp.get_owner(), "{}", excp.what());
-        else
-            log.to_all("{}", excp.what());
-
+        log_main.exception_to_all(excp);
+        return 1;
+    } catch (std::exception &excp) {
+        log_main.to_all("Program panic: {}.", excp.what());
         return 1;
     }
 

@@ -52,7 +52,10 @@ class audio : public base_audio<snd_pcm_t *, snd_pcm_hw_params_t *> {
 audio::audio(audio_stream_mode _mode) { init(_mode); }
 audio::~audio() {
     dump();
-    snd_pcm_hw_params_free(params);
+    if (params) {
+        snd_pcm_hw_params_free(params);
+        params = nullptr;
+    }
 }
 void audio::pread(char *buffer) {
     while (snd_pcm_readi(handle, buffer, period_size) < 0)
@@ -105,6 +108,6 @@ void audio::init_sound_device() {
 }
 void audio::dump_handle() { throw_if(snd_pcm_close, handle); }
 void audio::start_audio() { throw_if(snd_pcm_start, handle); }
-void audio::audio::stop_audio() { throw_if(snd_pcm_drain, handle); }
+void audio::audio::stop_audio() { throw_if(snd_pcm_drop, handle); }
 
 #endif

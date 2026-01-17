@@ -3,7 +3,7 @@
 
 #include "utils.hpp"
 
-#if defined(ALSA)
+#if defined(ALSA) || defined(__linux__)
 #define ARSND_NAME_D "ALSA"
 #elif defined(SNDIO)
 #define ARSND_NAME_D "SNDIO"
@@ -80,12 +80,12 @@ template <typename THandle, typename TParams> class base_audio {
     static constexpr std::string_view default_device_playback = "default";
     static constexpr std::string_view default_device_capture = "default";
 
-    static constexpr float latency = 0.01;
+    static constexpr std::size_t latency = 10;
     static constexpr std::size_t bits_per_sample = 16;
     static constexpr std::size_t bytes_per_sample = bits_per_sample / 8;
     static constexpr std::size_t sample_rate = 44100;
     static constexpr std::size_t channels = 2;
-    static constexpr std::size_t period_size = sample_rate * latency;
+    static constexpr std::size_t period_size = sample_rate * latency / 1000;
     static constexpr std::size_t buffer_size =
         period_size * channels * bits_per_sample / 8;
     static constexpr std::size_t diviser_for_hardware_buffer = 4;
@@ -128,12 +128,9 @@ template <typename THandle, typename TParams> class base_audio {
               typename... Args>
     constexpr void throw_error(std::format_string<Args...> format = "",
                                Args &&...args) {
-        noheap::runtime_error::buffer_t buffer, buffer_format;
+        noheap::runtime_error::buffer_t buffer{}, buffer_format{};
 
         auto end_it = buffer.begin();
-        std::fill_n(end_it, buffer.size(), 0);
-        std::fill_n(buffer_format.begin(), buffer_format.size(), 0);
-
         if constexpr (error_number != audio_stream_error::null) {
             end_it = std::format_to_n(
                          end_it, noheap::runtime_error::buffer_size, "{}",
@@ -220,7 +217,6 @@ constexpr void base_audio<THandle, TParams>::read(buffer_t &buffer) {
         throw_error<audio_stream_error::architectural_feature>(
             "The reading cannot be played back to the {} stream.",
             audio_stream_mode_to_string(mode));
-    std::fill_n(buffer.begin(), buffer_size, 0);
 
     if (!mute_reading)
         pread(buffer.data());
@@ -255,16 +251,16 @@ template <typename THandle, typename TParams>
 std::string_view base_audio<THandle, TParams>::device_capture =
     base_audio<THandle, TParams>::default_device_capture;
 
-#if defined(ALSA)
-#include <alsa_audio.hpp>
+#if defined(ALSA) || defined(__linux__)
+#include "alsa_audio.hpp"
 #elif defined(SNDIO)
-#include <sndio_audio.hpp>
+#include "sndio_audio.hpp"
 #elif defined(FREEBSD_AUDIO)
-#include <oss_audio.hpp>
+#include "oss_audio.hpp"
 #elif defined(OPENBSD_AUDIO)
-#include <openbsd_audio.hpp>
+#include "openbsd_audio.hpp"
 #elif defined(NETBSD_AUDIO)
-#include <netbsd_audio.hpp>
+#include "netbsd_audio.hpp"
 #endif
 
 #endif
