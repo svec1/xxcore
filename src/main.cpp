@@ -1,7 +1,7 @@
 #include "unix_udp_voice_service.hpp"
 
 using namespace boost;
-using dba         = default_base_audio;
+using dba         = stream_audio::default_base_audio;
 using uuv_service = unix_udp_voice_service;
 
 static constexpr log_handler log_main{{}};
@@ -82,7 +82,7 @@ static void parse_options(vcu_config &cfg, int argc, char *argv[]) {
 }
 
 void print_cfg(const vcu_config &cfg) {
-    using ca_type = uuv_service::voice_extention_d::ca_type;
+    using ca_type = stream_audio::ca_type;
 
     log_main.to_console(" -- Sound architecture: {}", dba::arsnd_name);
     log_main.to_console(" -- Sound device: {}", cfg.device);

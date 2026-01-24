@@ -17,15 +17,15 @@
 #error "Audio architecture is not defined."
 #endif
 
-enum audio_stream_mode : std::size_t { playback = 0, capture, bidirect };
+enum stream_audio_mode : std::size_t { playback = 0, capture, bidirect };
 
-static constexpr std::string_view audio_stream_mode_to_string(audio_stream_mode mode) {
+static constexpr std::string_view stream_audio_mode_to_string(stream_audio_mode mode) {
     switch (mode) {
-        case audio_stream_mode::playback:
+        case stream_audio_mode::playback:
             return "PLAYBACK";
-        case audio_stream_mode::capture:
+        case stream_audio_mode::capture:
             return "CAPTURE";
-        case audio_stream_mode::bidirect:
+        case stream_audio_mode::bidirect:
             return "BIDIRECT";
         default:
             return "UNDEFINED";
@@ -61,7 +61,7 @@ public:
         noheap::buffer_bytes_type<cfg.buffer_size, audio_config::byte_type>;
 
 protected:
-    enum audio_stream_error : std::size_t {
+    enum stream_audio_error : std::size_t {
         null        = 0,
         failed_open = 1,
         failed_start,
@@ -76,13 +76,14 @@ protected:
     };
 
 protected:
-    base_audio(audio_stream_mode mode);
+    base_audio(stream_audio_mode mode);
     virtual ~base_audio() = default;
 
 protected:
     void read(buffer_type &buffer);
     void write(const buffer_type &buffer);
 
+public:
     void set_mute(bool _mute_writing, bool _mute_reading);
 
 protected:
@@ -91,12 +92,12 @@ protected:
 
 protected:
     static consteval std::string_view
-        audio_stream_error_to_string(audio_stream_error error_number);
+        stream_audio_error_to_string(stream_audio_error error_number);
 
     template<typename... Args>
     constexpr void message(std::format_string<Args...> format, Args &&...args);
 
-    template<audio_stream_error error_number, bool on_errno = false, typename... Args>
+    template<stream_audio_error error_number, bool on_errno = false, typename... Args>
     static constexpr void throw_error(std::format_string<Args...> format = "",
                                       Args &&...args);
 
@@ -110,7 +111,7 @@ protected:
     static constexpr log_handler log{buffer_owner};
 
 protected:
-    audio_stream_mode mode;
+    stream_audio_mode mode;
     bool              possible_bidirect_stream;
 
 private:
@@ -119,37 +120,37 @@ private:
 };
 
 template<audio_config _cfg>
-base_audio<_cfg>::base_audio(audio_stream_mode _mode) {
+base_audio<_cfg>::base_audio(stream_audio_mode _mode) {
     try {
         mode                     = _mode;
         possible_bidirect_stream = (device_playback == device_capture);
 
-        if (mode == audio_stream_mode::bidirect && !possible_bidirect_stream)
-            throw_error<audio_stream_error::architectural_feature>(
+        if (mode == stream_audio_mode::bidirect && !possible_bidirect_stream)
+            throw_error<stream_audio_error::architectural_feature>(
                 "For bidirectional, different device names were specified.");
 
     } catch (noheap::runtime_error &excp) {
-        throw_error<audio_stream_error::failed_open>(
-            "{} {}: {}", audio_stream_mode_to_string(mode),
+        throw_error<stream_audio_error::failed_open>(
+            "{} {}: {}", stream_audio_mode_to_string(mode),
             (!(bool) mode ? device_playback : device_capture), excp.what());
     }
 }
 template<audio_config _cfg>
 void base_audio<_cfg>::read(buffer_type &buffer) {
-    if (mode == audio_stream_mode::playback)
-        throw_error<audio_stream_error::error_reading>(
+    if (mode == stream_audio_mode::playback)
+        throw_error<stream_audio_error::error_reading>(
             "The reading cannot be played back to the {} stream.",
-            audio_stream_mode_to_string(mode));
+            stream_audio_mode_to_string(mode));
 
     if (!mute_reading)
         pread(buffer.data());
 }
 template<audio_config _cfg>
 void base_audio<_cfg>::write(const buffer_type &buffer) {
-    if (mode == audio_stream_mode::capture)
-        throw_error<audio_stream_error::error_writing>(
+    if (mode == stream_audio_mode::capture)
+        throw_error<stream_audio_error::error_writing>(
             "The writing cannot be played back to the {} stream.",
-            audio_stream_mode_to_string(mode));
+            stream_audio_mode_to_string(mode));
 
     if (!mute_writing)
         pwrite(buffer.data());
@@ -162,27 +163,27 @@ void base_audio<_cfg>::set_mute(bool _mute_writing, bool _mute_reading) {
 
 template<audio_config _cfg>
 consteval std::string_view
-    base_audio<_cfg>::audio_stream_error_to_string(audio_stream_error error_number) {
+    base_audio<_cfg>::stream_audio_error_to_string(stream_audio_error error_number) {
     switch (error_number) {
-        case audio_stream_error::failed_open:
+        case stream_audio_error::failed_open:
             return "Failed to open the stream.";
-        case audio_stream_error::failed_start:
+        case stream_audio_error::failed_start:
             return "Failed to start the stream.";
-        case audio_stream_error::failed_stop:
+        case stream_audio_error::failed_stop:
             return "Failed to stop the stream.";
-        case audio_stream_error::failed_close:
+        case stream_audio_error::failed_close:
             return "Failed to close the stream.";
-        case audio_stream_error::failed_set_params:
+        case stream_audio_error::failed_set_params:
             return "Failed to set parameters of the stream.";
-        case audio_stream_error::failed_get_params:
+        case stream_audio_error::failed_get_params:
             return "Failed to get parameters of the stream.";
-        case audio_stream_error::failed_get_status:
+        case stream_audio_error::failed_get_status:
             return "Failed to get status of the stream.";
-        case audio_stream_error::error_writing:
+        case stream_audio_error::error_writing:
             return "Error writing audio.";
-        case audio_stream_error::error_reading:
+        case stream_audio_error::error_reading:
             return "Error writing audio.";
-        case audio_stream_error::architectural_feature:
+        case stream_audio_error::architectural_feature:
             return "Architecture error.";
         default:
             return "Undefined error.";
@@ -195,16 +196,16 @@ constexpr void base_audio<_cfg>::message(std::format_string<Args...> format,
     log.to_console(format, std::forward<Args>(args)...);
 }
 template<audio_config _cfg>
-template<base_audio<_cfg>::audio_stream_error error_number, bool on_errno,
+template<base_audio<_cfg>::stream_audio_error error_number, bool on_errno,
          typename... Args>
 constexpr void base_audio<_cfg>::throw_error(std::format_string<Args...> format,
                                              Args &&...args) {
     noheap::runtime_error::buffer_type buffer{}, buffer_format{};
 
     auto end_it = buffer.begin();
-    if constexpr (error_number != audio_stream_error::null) {
+    if constexpr (error_number != stream_audio_error::null) {
         end_it = std::format_to_n(end_it, noheap::runtime_error::buffer_size, "{}",
-                                  audio_stream_error_to_string(error_number))
+                                  stream_audio_error_to_string(error_number))
                      .out;
         if (!format.get().empty()) {
             std::format_to_n(buffer_format.begin(),

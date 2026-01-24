@@ -25,7 +25,7 @@ protected:
     (std::array<char, audio::cfg.bits_per_sample>{});
 
 public:
-    audio(audio_stream_mode _mode);
+    audio(stream_audio_mode _mode);
     ~audio() override;
 
 protected:
@@ -45,19 +45,19 @@ private:
     snd_pcm_hw_params_t *params;
 };
 template<audio_config _cfg>
-audio<_cfg>::audio(audio_stream_mode _mode) : base_audio<_cfg>(_mode) {
+audio<_cfg>::audio(stream_audio_mode _mode) : base_audio<_cfg>(_mode) {
     switch (this->mode) {
         default:
-        case audio_stream_mode::playback:
+        case stream_audio_mode::playback:
             alsa_throw_if_error(snd_pcm_open, &handle, this->device_playback.data(),
                                 SND_PCM_STREAM_PLAYBACK, 0);
             break;
-        case audio_stream_mode::capture:
+        case stream_audio_mode::capture:
             alsa_throw_if_error(snd_pcm_open, &handle, this->device_capture.data(),
                                 SND_PCM_STREAM_CAPTURE, 0);
             break;
-        case audio_stream_mode::bidirect:
-            this->template throw_error<audio::audio_stream_error::architectural_feature>(
+        case stream_audio_mode::bidirect:
+            this->template throw_error<audio::stream_audio_error::architectural_feature>(
                 "Bidirect mode is not supported.");
     }
 
@@ -126,7 +126,7 @@ template<typename T, typename... Args>
 constexpr void audio<_cfg>::alsa_throw_if_error(T &&func, Args &&...args) {
     static int ret;
     if (ret = func(args...); ret < 0)
-        audio::template throw_error<audio::audio_stream_error::architectural_feature>(
+        audio::template throw_error<audio::stream_audio_error::architectural_feature>(
             "{}", snd_strerror(ret));
 }
 

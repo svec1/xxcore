@@ -1,10 +1,9 @@
 #ifndef ALSA_UDP_VOICE_SERVICE_HPP
 #define ALSA_UDP_VOICE_SERVICE_HPP
 
-#include "aio.hpp"
-#include "coder_audio.hpp"
 #include "crypt.hpp"
 #include "net.hpp"
+#include "stream_audio.hpp"
 
 using namespace boost;
 
@@ -14,10 +13,8 @@ struct voice_extention {
     static constexpr std::size_t min_count_blocks_for_nonwaiting =
         _min_count_blocks_for_nonwaiting;
 
-    using ca_type = coder_audio<default_base_audio::cfg>;
-
 public:
-    struct packet_t : public packet_native_t<ca_type::encode_buffer_size> {
+    struct packet_t : public packet_native_t<stream_audio::encode_buffer_size> {
         static constexpr std::size_t uuid_size = 32;
         using uuid_type                        = openssl_context::buffer_type<uuid_size>;
 
@@ -64,18 +61,18 @@ public:
         using packet = ::action<packet>::packet;
 
     public:
-        action() : running(true) {
+        action() : running(true), pushed(false), filled(0) {
             in_stream  = std::async(std::launch::async, [this] {
                 try {
-                    input in;
-
                     while (running.load()) {
-                        typename ca_type::encode_buffer_type buffer_tmp =
-                            ca.encode(in.get_samples());
+                        typename stream_audio::encode_buffer_type buffer_tmp =
+                            io_audio.read();
                         {
                             std::lock_guard lock(in_stream_m);
                             in_stream_buffer.push(buffer_tmp);
                         }
+                        filled.fetch_add(1);
+                        filled.notify_one();
                     }
                 } catch (...) {
                     running.store(false);
@@ -84,21 +81,16 @@ public:
             });
             out_stream = std::async(std::launch::async, [this] {
                 try {
-                    output out;
+                    if (!pushed.load())
+                        pushed.wait(false);
 
-                    std::this_thread::sleep_for(std::chrono::milliseconds(
-                        default_base_audio::cfg.latency * max_stream_size));
                     while (running.load()) {
-                        if (out_stream_buffer.size() < min_count_blocks_for_nonwaiting)
-                            std::this_thread::sleep_for(std::chrono::milliseconds(
-                                default_base_audio::cfg.latency));
                         typename packet::packet_type::buffer_type buffer_tmp;
                         {
                             std::lock_guard lock(out_stream_m);
                             buffer_tmp = out_stream_buffer.pop();
                         }
-                        auto begin = get_now_ms();
-                        out.play_samples(ca.decode(buffer_tmp, false));
+                        io_audio.write(buffer_tmp, false);
                     }
                 } catch (...) {
                     running.store(false);
@@ -129,21 +121,39 @@ public:
     public:
         constexpr void init_packet(packet::packet_t &pckt) override {
             check_running();
+
+            if (!filled.load())
+                filled.wait(0);
+            filled.fetch_sub(1);
+
             std::lock_guard lock(in_stream_m);
             pckt.buffer = in_stream_buffer.pop();
         }
         constexpr void process_packet(packet::packet_t &&pckt) override {
             check_running();
+
             std::lock_guard lock(out_stream_m);
             out_stream_buffer.push(pckt.buffer);
+
+            noheap::println("{}", out_stream_buffer.size());
+
+            if (!pushed.load()
+                && out_stream_buffer.size()
+                       == stream_audio::default_base_audio::cfg
+                                  .diviser_for_hardware_buffer
+                              + 1) {
+                pushed.store(true);
+                pushed.notify_one();
+            }
         }
 
     private:
-        std::mutex        in_stream_m, out_stream_m;
-        std::future<void> in_stream, out_stream;
-        std::atomic<bool> running;
+        std::mutex               in_stream_m, out_stream_m;
+        std::future<void>        in_stream, out_stream;
+        std::atomic<bool>        running, pushed;
+        std::atomic<std::size_t> filled;
 
-        ca_type ca;
+        stream_audio io_audio;
 
         noheap::ring_buffer<typename packet::buffer_type, max_stream_size>
             in_stream_buffer, out_stream_buffer;
@@ -154,7 +164,7 @@ class unix_udp_voice_service {
 public:
     static constexpr ipv v = ipv::v4;
 
-    using voice_extention_d = voice_extention<64, 16>;
+    using voice_extention_d = voice_extention<64, 32>;
     using udp_stream_t      = net_stream_udp<typename voice_extention_d::action, v>;
     using packet            = voice_extention_d::packet;
     using ipv_t             = udp_stream_t::ipv_t;
@@ -182,9 +192,8 @@ void unix_udp_voice_service::run(const ipv_t &addr) {
     try {
         thread_local packet pckt_for_receiving, pckt_for_sending;
 
+        udp_stream.register_send_handler<0>(pckt_for_sending, addr);
         udp_stream.register_receive_handler(pckt_for_receiving);
-        udp_stream.register_send_handler<default_base_audio::cfg.latency>(
-            pckt_for_sending, addr);
 
         io.run();
 
