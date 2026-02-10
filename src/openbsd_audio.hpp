@@ -20,26 +20,26 @@ protected:
 template<audio_config _cfg>
 audio<_cfg>::audio(stream_audio_mode _mode) : sio_base_audio<_cfg>(_mode) {
     audio_status status;
-    if (ioctl(handle, AUDIO_GETSTATUS, &status) == -1)
+    if (ioctl(this->handle, AUDIO_GETSTATUS, &status) == -1)
         audio::template throw_error<audio::stream_audio_error::failed_get_status>();
 
     if (!status.pause)
         return;
 
-    if (ioctl(handle, AUDIO_START) == -1)
+    if (ioctl(this->handle, AUDIO_START) == -1)
         audio::template throw_error<audio::stream_audio_error::failed_start>();
 }
 
 template<audio_config _cfg>
 audio<_cfg>::~audio() {
     audio_status status;
-    if (ioctl(handle, AUDIO_GETSTATUS, &status) == -1)
+    if (ioctl(this->handle, AUDIO_GETSTATUS, &status) == -1)
         audio::template throw_error<audio::stream_audio_error::failed_get_status>();
 
     if (status.pause)
         return;
 
-    if (ioctl(handle, AUDIO_STOP) == -1)
+    if (ioctl(this->handle, AUDIO_STOP) == -1)
         audio::template throw_error<audio::stream_audio_error::failed_stop>();
 }
 template<audio_config _cfg>
@@ -50,19 +50,19 @@ void audio<_cfg>::init_params() {
 
     ap.sig   = 1;
     ap.le    = 1;
-    ap.bits  = bits_per_sample;
-    ap.bps   = bytes_per_sample;
+    ap.bits  = audio::cfg.bits_per_sample;
+    ap.bps   = audio::cfg.bytes_per_sample;
     ap.msb   = 0;
-    ap.rate  = sample_rate;
-    ap.pchan = channels;
-    ap.rchan = channels;
+    ap.rate  = audio::cfg.sample_rate;
+    ap.pchan = audio::cfg.channels;
+    ap.rchan = audio::cfg.channels;
     ap.nblks = 4;
-    ap.round = buffer_size / 4;
+    ap.round = audio::cfg.buffer_size / 4;
 
-    if (ioctl(handle, AUDIO_SETPAR, &ap) == -1)
+    if (ioctl(this->handle, AUDIO_SETPAR, &ap) == -1)
         audio::template throw_error<audio::stream_audio_error::failed_set_params>();
 
-    if (ioctl(handle, AUDIO_GETPAR, &ap) == -1)
+    if (ioctl(this->handle, AUDIO_GETPAR, &ap) == -1)
         audio::template throw_error<audio::stream_audio_error::failed_get_params>();
 }
 #endif

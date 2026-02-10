@@ -88,10 +88,7 @@ public:
                 pckt.size());
             cipher_state->decrypt();
 
-            {
-                std::lock_guard lock(access_m);
                 buffer.push(pckt, pckt->payload.sequence_number);
-            }
 
             if (buffer.get_count_elements() == min_count_packets_for_handle)
                 filled = true;
@@ -99,8 +96,6 @@ public:
                 filled = false;
 
             if (filled) {
-                std::lock_guard lock(access_m);
-
                 auto jitter_element = buffer.pop();
                 pckt                = jitter_element.first;
                 pckt->payload.lost  = jitter_element.second;
@@ -124,14 +119,8 @@ public:
 
 public:
     float get_loss_per_cent() const {
-        std::size_t count_pushed_packets;
-        std::size_t count_lost_packets;
-
-        {
-            std::lock_guard lock(access_m);
-            count_pushed_packets = buffer.get_count_pushed_elements();
-            count_lost_packets   = buffer.get_count_lost_elements();
-        }
+        std::size_t count_pushed_packets = buffer.get_count_pushed_elements();
+        std::size_t count_lost_packets   = buffer.get_count_lost_elements();
 
         float loss_per_cent =
             static_cast<float>(count_lost_packets - last_count_lost_packets)
@@ -152,7 +141,6 @@ private:
     }
 
 private:
-    mutable std::mutex                        access_m;
     mutable jitter_buffer_type                buffer;
     mutable noise_context_type::cipher_state *cipher_state = nullptr;
 

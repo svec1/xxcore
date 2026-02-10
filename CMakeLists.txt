@@ -15,6 +15,7 @@ set(OPUS_BUILD_SHARED_LIBRARY ON)
 add_subdirectory(thirdparty/opus)	
 
 set(NOISE_C_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/noise-c)
+set(OPUS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/opus)
 
 file(GLOB_RECURSE NOISE_C_SOURCE_FILES ${NOISE_C_DIR}/src/*)
 set(NOISE_C_INCLUDE_DIR ${NOISE_C_DIR}/include)
@@ -27,7 +28,7 @@ set(
 add_custom_command(
     OUTPUT ./configure
     WORKING_DIRECTORY ${NOISE_C_DIR}
-    COMMAND ${NOISE_C_DIR}/autogen.sh > /dev/null
+    COMMAND ${NOISE_C_DIR}/autogen.sh && autoupdate > /dev/null
     VERBATIM
 )
 
@@ -35,7 +36,8 @@ set(noise-c_configure_output src/Makefile src/protocol/Makefile src/keys/Makefil
 add_custom_command(
     OUTPUT ${noise-c_configure_output}  
     WORKING_DIRECTORY ${NOISE_C_DIR}
-    COMMAND ./configure > /dev/null
+    COMMAND ./configure --with-openssl=yes --enable-examples=no > /dev/null
+    DEPENDS ./configure
     VERBATIM
 )
 
@@ -44,6 +46,7 @@ add_custom_target(
     WORKING_DIRECTORY ${NOISE_C_DIR}
     COMMAND make > /dev/null
     DEPENDS ${noise-c_configure_output}
+    VERBATIM
 )
 add_dependencies(${UUV} noise-c)
 
@@ -55,7 +58,8 @@ target_include_directories(
     src/
     ${LIBBOOST_PATH}
     ${OpenSSL_INCLUDE_DIRS}
-    ${NOISE_C_INCLUDE_DIR}
+    ${OPUS_DIR}/include
+	${NOISE_C_INCLUDE_DIR}
 )
 target_link_libraries(
     ${UUV}

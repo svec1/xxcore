@@ -1,7 +1,7 @@
 #ifndef CODER_AUDIO
 #define CODER_AUDIO
 
-#include <opus/opus.h>
+#include <opus.h>
 
 #include "base_audio.hpp"
 #include "utils.hpp"

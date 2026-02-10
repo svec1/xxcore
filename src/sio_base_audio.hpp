@@ -20,8 +20,10 @@ protected:
 protected:
     virtual void init_params() = 0;
 
-private:
+protected:
     int    handle;
+
+private:
     pollfd pfd;
 };
 

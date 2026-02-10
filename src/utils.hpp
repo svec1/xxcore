@@ -55,7 +55,7 @@ constexpr TReturn to_new_array(TSource &&array) {
     typename TSource_pure::iterator begin = array.begin();
     typename TSource_pure::iterator end   = begin;
 
-    if constexpr (array.size() >= array_tmp.size())
+    if (array.size() >= array_tmp.size())
         end += array_tmp.size();
     else
         end += array.size();
