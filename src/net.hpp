@@ -159,33 +159,67 @@ template<typename TSocket>
 concept Socket =
     std::same_as<TSocket, asio::ip::udp> || std::same_as<TSocket, asio::ip::tcp>;
 
-template<Socket TSocket, ipv v>
-static constexpr TSocket get_ipv() {
-    if constexpr (v == ipv::v6)
-        return TSocket::v6();
-    else
-        return TSocket::v4();
-}
-
-template<ipv v>
-using ipv_address_type =
-    std::conditional_t<static_cast<bool>(v), asio::ip::address_v6, asio::ip::address_v4>;
-
 template<Socket TSocket, Derived_from_action Action, ipv v>
 class net_stream_basic {
 protected:
+    using basic_socket_udp_type = asio::ip::udp;
+    using basic_socket_tcp_type = asio::ip::tcp;
+
+    static_assert(std::same_as<TSocket, basic_socket_udp_type>
+                      || std::same_as<TSocket, basic_socket_tcp_type>,
+                  "Invalid basic socket type.");
+
+public:
+    static constexpr TSocket get_ipv() {
+        if constexpr (v == ipv::v6)
+            return TSocket::v6();
+        else
+            return TSocket::v4();
+    }
+
+private:
+    struct acceptor_decoy {
+        acceptor_decoy(asio::io_context &) {}
+    };
+
+    template<typename T>
+    struct allowed_type_for_acceptor : std::false_type {
+        using type = acceptor_decoy;
+    };
+    template<>
+    struct allowed_type_for_acceptor<asio::ip::tcp> : std::true_type {
+        using type = asio::ip::tcp::acceptor;
+    };
+
+protected:
     using basic_socket_type = TSocket;
     using socket_type       = TSocket::socket;
+    using acceptor_type     = allowed_type_for_acceptor<basic_socket_type>::type;
     using endpoint_type     = basic_socket_type::endpoint;
-    using address_type      = ipv_address_type<v>;
+    using address_type = std::conditional_t<static_cast<bool>(v), asio::ip::address_v6,
+                                            asio::ip::address_v4>;
 
-    enum class async_socket_operation { send_to = 0, receive_from, timer };
+    static constexpr bool is_tcp = std::same_as<acceptor_type, asio::ip::tcp::acceptor>;
+
+    enum class async_socket_operation {
+        send_to = 0,
+        receive_from,
+        connect,
+        accept,
+        timer
+    };
 
 protected:
     net_stream_basic(const net_stream_basic &)            = delete;
     net_stream_basic &operator=(const net_stream_basic &) = delete;
 
     net_stream_basic(asio::io_context &_io, asio::ip::port_type _port);
+
+protected:
+    static void init_socket(net_stream_basic<TSocket, Action, v> &stream,
+                            asio::ip::port_type                   port);
+    static void init_acceptor(net_stream_basic<TSocket, Action, v> &stream,
+                              asio::ip::port_type                   port);
 
 public:
     const Action &get_action() const { return act; }
@@ -202,12 +236,10 @@ protected:
 
     void send_to(asio::const_buffer buffer, const endpoint_type &endpoint);
     void receive_from(asio::mutable_buffer buffer, endpoint_type &endpoint);
-    void connect(const endpoint_type &endpoint);
+    void connect(const endpoint_type &endpoint, system::error_code &ec);
+    void accept();
 
-    void set_socket(socket_type &&_socket);
-
-protected:
-    static void init_socket(socket_type &_socket, asio::ip::port_type _port);
+    void close_socket();
 
 protected:
     static void handle_error(const system::error_code &ec);
@@ -225,13 +257,52 @@ protected:
     Action act;
 
 private:
-    socket_type socket;
+    socket_type   socket;
+    acceptor_type acceptor;
 };
 template<Socket TSocket, Derived_from_action Action, ipv v>
 net_stream_basic<TSocket, Action, v>::net_stream_basic(asio::io_context   &_io,
                                                        asio::ip::port_type _port)
-    : io(_io), port(_port), running(true), socket(io) {
-    init_socket(socket, port);
+    : io(_io), port(_port), running(true), socket(io), acceptor(io) {
+    init_socket(*this, port);
+    init_acceptor(*this, port);
+}
+template<Socket TSocket, Derived_from_action Action, ipv v>
+void net_stream_basic<TSocket, Action, v>::init_socket(
+    net_stream_basic<TSocket, Action, v> &stream, asio::ip::port_type port) {
+    system::error_code ec;
+
+    stream.socket.close();
+    stream.socket.open(get_ipv(), ec);
+    if (ec.value())
+        handle_error(ec);
+
+    stream.socket.set_option(typename socket_type::reuse_address(true));
+    stream.socket.set_option(typename socket_type::broadcast(false));
+
+    stream.socket.bind({get_ipv(), port}, ec);
+    if (ec.value())
+        handle_error(ec);
+}
+template<Socket TSocket, Derived_from_action Action, ipv v>
+void net_stream_basic<TSocket, Action, v>::init_acceptor(
+    net_stream_basic<TSocket, Action, v> &stream, asio::ip::port_type port) {
+    if constexpr (std::same_as<acceptor_type, acceptor_decoy>)
+        return;
+    else {
+        system::error_code ec;
+
+        stream.acceptor.close();
+        stream.acceptor.open(get_ipv(), ec);
+        if (ec)
+            handle_error(ec);
+
+        stream.acceptor.set_option(typename socket_type::reuse_address(true));
+
+        stream.acceptor.bind({get_ipv(), port}, ec);
+        if (ec)
+            handle_error(ec);
+    }
 }
 
 template<Socket TSocket, Derived_from_action Action, ipv v>
@@ -248,8 +319,12 @@ void net_stream_basic<TSocket, Action, v>::register_async_socket_operation(
         return;
 
     const auto async_operation_handler = [&](const system::error_code &ec) {
-        handle_error(ec);
-        func();
+        if constexpr (std::invocable<Func, system::error_code>)
+            func(ec);
+        else {
+            handle_error(ec);
+            func();
+        }
     };
     const auto handler = std::bind(async_operation_handler, asio::placeholders::error);
 
@@ -257,12 +332,17 @@ void net_stream_basic<TSocket, Action, v>::register_async_socket_operation(
         socket.async_send_to(std::forward<TBuffer>(buffer), endpoint, handler);
     else if constexpr (async_op == async_socket_operation::receive_from)
         socket.async_receive_from(std::forward<TBuffer>(buffer), endpoint, handler);
-    else {
+    else if constexpr (async_op == async_socket_operation::connect)
+        socket.async_connect(endpoint, handler);
+    else if constexpr (async_op == async_socket_operation::accept) {
+        acceptor.async_accept(socket, handler);
+    } else if constexpr (async_op == async_socket_operation::timer) {
         thread_local asio::steady_timer t(this->io);
 
         t.expires_after(std::chrono::milliseconds(delay));
         t.async_wait(handler);
-    }
+    } else
+        static_assert(false, "Unknown async operation.");
 }
 
 template<Socket TSocket, Derived_from_action Action, ipv v>
@@ -289,41 +369,36 @@ void net_stream_basic<TSocket, Action, v>::receive_from(asio::mutable_buffer buf
     if constexpr (std::same_as<basic_socket_type, asio::ip::udp>)
         socket.receive_from(buffer, endpoint, 0, ec);
     else
-        socket.receive(buffer);
+        socket.receive(buffer, 0, ec);
 
     this->handle_error(ec);
 }
 template<Socket TSocket, Derived_from_action Action, ipv v>
-void net_stream_basic<TSocket, Action, v>::connect(const endpoint_type &endpoint) {
+void net_stream_basic<TSocket, Action, v>::connect(const endpoint_type &endpoint,
+                                                   system::error_code  &ec) {
     if (!running)
         return;
 
-    system::error_code ec;
     socket.connect(endpoint, ec);
+}
+template<Socket TSocket, Derived_from_action Action, ipv v>
+void net_stream_basic<TSocket, Action, v>::accept() {
+    if constexpr (!std::same_as<basic_socket_type, asio::ip::udp>) {
+        if (!running)
+            return;
 
-    this->handle_error(ec);
+        system::error_code ec;
+
+        close_socket();
+        acceptor.listen();
+        acceptor.accept(socket, ec);
+        this->handle_error(ec);
+    }
 }
 
 template<Socket TSocket, Derived_from_action Action, ipv v>
-void net_stream_basic<TSocket, Action, v>::set_socket(socket_type &&_socket) {
-    socket = std::move(_socket);
-}
-
-template<Socket TSocket, Derived_from_action Action, ipv v>
-void net_stream_basic<TSocket, Action, v>::init_socket(socket_type        &socket,
-                                                       asio::ip::port_type port) {
-    system::error_code ec;
-    socket.open(get_ipv<basic_socket_type, v>(), ec);
-
-    socket.set_option(typename socket_type::reuse_address(true));
-    socket.set_option(typename socket_type::broadcast(false));
-
-    if (ec.value())
-        handle_error(ec);
-
-    socket.bind({get_ipv<basic_socket_type, v>(), port}, ec);
-    if (ec.value())
-        handle_error(ec);
+void net_stream_basic<TSocket, Action, v>::close_socket() {
+    socket.close();
 }
 
 template<Socket TSocket, Derived_from_action Action, ipv v>
@@ -398,16 +473,16 @@ void net_stream_udp<Action, v>::register_receive_handler(TPacket &pckt) {
 template<Derived_from_action Action, ipv v = ipv::v4>
 class net_stream_tcp final : public net_stream_basic<asio::ip::tcp, Action, v> {
 public:
-    using basic_socket_type = net_stream_tcp::basic_socket_type;
-    using socket_type       = net_stream_tcp::socket_type;
-    using address_type      = net_stream_tcp::address_type;
-    using endpoint_type     = net_stream_tcp::endpoint_type;
+    using basic_socket_type      = net_stream_tcp::basic_socket_type;
+    using socket_type            = net_stream_tcp::socket_type;
+    using address_type           = net_stream_tcp::address_type;
+    using endpoint_type          = net_stream_tcp::endpoint_type;
+    using async_socket_operation = net_stream_tcp::async_socket_operation;
 
     using acceptor_type = basic_socket_type::acceptor;
 
 public:
     net_stream_tcp(asio::io_context &_io, asio::ip::port_type _port);
-    net_stream_tcp(asio::io_context &_io, endpoint_type &&endpoint);
 
 public:
     template<Packet TPacket>
@@ -418,37 +493,18 @@ public:
         requires std::same_as<typename decltype(Action{})::packet, TPacket>
     void receive(TPacket &pckt);
 
+    bool wait_connect(const endpoint_type &endpoint);
+    void wait_accept();
+
+    template<typename Func>
+    void async_connect(const endpoint_type &endpoint, Func &&func);
     template<typename Func>
     void async_accept(Func &&func);
-
-private:
-    acceptor_type acceptor;
 };
 template<Derived_from_action Action, ipv v>
 net_stream_tcp<Action, v>::net_stream_tcp(asio::io_context   &_io,
                                           asio::ip::port_type _port)
-    : net_stream_basic<asio::ip::tcp, Action, v>(_io, _port), acceptor(_io) {
-    system::error_code ec;
-    acceptor.open(get_ipv<basic_socket_type, v>(), ec);
-    acceptor.set_option(typename socket_type::reuse_address(true));
-    acceptor.non_blocking(true);
-    if (ec)
-        this->handle_error(ec);
-}
-template<Derived_from_action Action, ipv v>
-net_stream_tcp<Action, v>::net_stream_tcp(asio::io_context &_io, endpoint_type &&endpoint)
-    : net_stream_tcp(_io, endpoint.port()) {
-    system::error_code ec;
-
-    socket_type socket_tmp(_io);
-    this->init_socket(socket_tmp, endpoint.port());
-
-    acceptor.accept(socket_tmp, ec);
-
-    if (ec || socket_tmp.remote_endpoint() != endpoint)
-        this->connect(endpoint);
-    else
-        this->set_socket(std::move(socket_tmp));
+    : net_stream_basic<asio::ip::tcp, Action, v>(_io, _port) {
 }
 
 template<Derived_from_action Action, ipv v>
@@ -471,12 +527,34 @@ void net_stream_tcp<Action, v>::receive(TPacket &pckt) {
     TPacket::handle(std::move(pckt), std::bind(&Action::process_packet, &this->act,
                                                std::placeholders::_1));
 }
+template<Derived_from_action Action, ipv v>
+bool net_stream_tcp<Action, v>::wait_connect(const endpoint_type &endpoint) {
+    net_stream_tcp<Action, v> stream_tmp(this->io, this->port);
+    system::error_code        ec;
+
+    this->connect(endpoint, ec);
+
+    if (ec == system::errc::success)
+        return true;
+    return false;
+}
+template<Derived_from_action Action, ipv v>
+void net_stream_tcp<Action, v>::wait_accept() {
+    this->accept();
+}
 
 template<Derived_from_action Action, ipv v>
 template<typename Func>
+void net_stream_tcp<Action, v>::async_connect(const endpoint_type &endpoint,
+                                              Func               &&func) {
+    this->template register_async_socket_operation<async_socket_operation::connect, 0>(
+        std::forward<Func>(func), asio::const_buffer{}, endpoint);
+}
+template<Derived_from_action Action, ipv v>
+template<typename Func>
 void net_stream_tcp<Action, v>::async_accept(Func &&func) {
-    acceptor.async_accept(
-        std::bind(std::forward<Func>(func), asio::placeholders::error, *this));
+    this->template register_async_socket_operation<async_socket_operation::accept, 0>(
+        std::forward<Func>(func), asio::const_buffer{}, {});
 }
 
 #endif

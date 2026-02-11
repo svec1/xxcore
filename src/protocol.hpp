@@ -88,7 +88,7 @@ public:
                 pckt.size());
             cipher_state->decrypt();
 
-                buffer.push(pckt, pckt->payload.sequence_number);
+            buffer.push(pckt, pckt->payload.sequence_number);
 
             if (buffer.get_count_elements() == min_count_packets_for_handle)
                 filled = true;
@@ -170,6 +170,7 @@ public:
                                         pckt.size()),
                 0);
             noise_ctx_p->set_handshake_message();
+
         } catch (noheap::runtime_error &excp) {
             excp.set_owner(buffer_owner);
             throw;

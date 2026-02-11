@@ -28,7 +28,7 @@ set(
 add_custom_command(
     OUTPUT ./configure
     WORKING_DIRECTORY ${NOISE_C_DIR}
-    COMMAND ${NOISE_C_DIR}/autogen.sh && autoupdate > /dev/null
+    COMMAND ${NOISE_C_DIR}/autogen.sh > /dev/null
     VERBATIM
 )
 
@@ -36,7 +36,7 @@ set(noise-c_configure_output src/Makefile src/protocol/Makefile src/keys/Makefil
 add_custom_command(
     OUTPUT ${noise-c_configure_output}  
     WORKING_DIRECTORY ${NOISE_C_DIR}
-    COMMAND ./configure --with-openssl=yes --enable-examples=no > /dev/null
+    COMMAND ./configure > /dev/null
     DEPENDS ./configure
     VERBATIM
 )

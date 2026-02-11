@@ -13,7 +13,6 @@ using namespace boost;
 class unix_udp_voice_service {
 public:
     static constexpr ipv v = ipv::v4;
-    using address_type     = ipv_address_type<v>;
 
     static constexpr std::size_t max_size_config = 4096;
     using buffer_config_type = noheap::buffer_bytes_type<max_size_config>;
@@ -26,6 +25,7 @@ public:
     using stream_tcp_type =
         net_stream_tcp<protocol::noise_handshake_action<relation_type>, v>;
     using stream_udp_type = net_stream_udp<protocol::payload_action, v>;
+    using address_type    = stream_udp_type::address_type;
 
 private:
     struct config_type {
@@ -119,7 +119,12 @@ void unix_udp_voice_service::run() {
                     noise_handshake_packet<ntn_relation::PTU>::get_protocol();
 
                 noise_context<ntn_relation::PTU>   noise_ctx(config.pattern, config.role);
-                stream_tcp_type<ntn_relation::PTU> tcp_stream(io, {addr, tcp_port});
+                stream_tcp_type<ntn_relation::PTU> tcp_stream(io, tcp_port);
+
+                if (!tcp_stream.wait_connect({addr, tcp_port})) {
+                    log.to_console("Listen...");
+                    tcp_stream.wait_accept();
+                }
 
                 noise_handshake_prt.set_noise_context(noise_ctx);
                 noise_handshake<ntn_relation::PTU>(tcp_stream, std::move(config));
