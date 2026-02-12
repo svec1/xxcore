@@ -142,12 +142,13 @@ private:
         std::uint16_t           hybrid;
         std::uint16_t           pattern;
         prologue_extention_type ext;
-    } prologue = {.cipher = nid_static.cipher_id,
-                  .psk    = nid_static.prefix_id,
-                  .dh     = nid_static.dh_id,
-                  .hash   = nid_static.hash_id,
-                  .hybrid = nid_static.hybrid_id,
-                  .ext    = {}};
+    } prologue = {.cipher  = nid_static.cipher_id,
+                  .psk     = nid_static.prefix_id,
+                  .dh      = nid_static.dh_id,
+                  .hash    = nid_static.hash_id,
+                  .hybrid  = nid_static.hybrid_id,
+                  .pattern = 0,
+                  .ext     = {}};
 
 public:
     struct local_keypair_type {
