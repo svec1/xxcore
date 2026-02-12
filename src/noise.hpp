@@ -302,7 +302,7 @@ noise_context<_relation_type>::noise_context(noise_pattern pattern, noise_role r
           .cipher_id  = nid_static.cipher_id,
           .hash_id    = nid_static.hash_id,
           .hybrid_id  = nid_static.hybrid_id,
-          .reserved   = {0}} {
+          .reserved   = {}} {
     prologue.pattern = nid.pattern_id;
 
     if (ptu && !is_ptu(pattern) || !ptu && is_ptu(pattern))
@@ -325,6 +325,10 @@ noise_context<_relation_type>::~noise_context() {
 template<ntn_relation _relation_type>
 void noise_context<_relation_type>::start() {
     std::size_t ret;
+    if ((ret = noise_handshakestate_set_prologue(
+             handshakestate, reinterpret_cast<char *>(&prologue), sizeof(prologue)))
+        != NOISE_ERROR_NONE)
+        handle_error(ret, "Failed to set prologue");
     if ((ret = noise_handshakestate_start(handshakestate)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to start handshake");
 }
@@ -360,7 +364,6 @@ noise_context<_relation_type>::name_id
     noise_context<_relation_type>::get_name_id() const {
     name_id buffer_tmp;
     noise_protocol_id_to_name(buffer_tmp.data(), buffer_tmp.size(), &nid);
-
     return buffer_tmp;
 }
 template<ntn_relation _relation_type>
@@ -388,11 +391,6 @@ void noise_context<_relation_type>::get_handshake_message() {
 template<ntn_relation _relation_type>
 void noise_context<_relation_type>::set_prologue(prologue_extention_type &&ext) {
     prologue.ext = std::move(ext);
-    std::size_t ret;
-    if ((ret = noise_handshakestate_set_prologue(
-             handshakestate, reinterpret_cast<char *>(&prologue), sizeof(prologue)))
-        != NOISE_ERROR_NONE)
-        handle_error(ret, "Failed to set prologue");
 }
 template<ntn_relation _relation_type>
 void noise_context<_relation_type>::set_pre_shared_key(pre_shared_key_type &&key) {

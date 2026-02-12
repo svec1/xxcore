@@ -75,7 +75,7 @@ void unix_udp_voice_service::noise_handshake(stream_tcp_type &tcp_stream,
                                              config_type    &&config) {
     using packet_type        = noise_handshake_packet<relation_type>;
     using noise_context_type = protocol::noise_context_type<relation_type>;
-    packet_type pckt;
+    packet_type pckt{};
 
     auto &noise_ctx =
         noise_handshake_packet<ntn_relation::PTU>::get_protocol().get_noise_context();
@@ -96,7 +96,6 @@ void unix_udp_voice_service::noise_handshake(stream_tcp_type &tcp_stream,
     log.to_all("Starting noise handshake: {}",
                std::string_view(noise_name_id.data(), noise_name_id.size()));
 
-    noise_ctx.set_prologue({});
     noise_ctx.start();
     while (true) {
         auto action = noise_ctx.get_action();
