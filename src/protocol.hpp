@@ -60,8 +60,8 @@ struct payload_protocol_type
 
 public:
     constexpr void
-        prepare(packet_type                              &pckt,
-                payload_protocol_type::callback_prepare_t callback) const override {
+        prepare(packet_type &pckt, buffer_address_type addr,
+                payload_protocol_type::callback_prepare_type callback) const override {
         check_cipher_state();
         try {
             callback(pckt);
@@ -79,8 +79,8 @@ public:
         }
     }
     constexpr void
-        handle(packet_type                             &pckt,
-               payload_protocol_type::callback_handle_t callback) const override {
+        handle(packet_type &pckt, buffer_address_type addr,
+               payload_protocol_type::callback_handle_type callback) const override {
         check_cipher_state();
         try {
             cipher_state->output_buffer.set_buffer(
@@ -160,8 +160,8 @@ struct noise_handshake_protocol_type
     using noise_context_type = noise_context_type<relation_type>;
 
 public:
-    constexpr void prepare(packet_type       &pckt,
-                           callback_prepare_t callback) const override {
+    constexpr void prepare(packet_type &pckt, buffer_address_type addr,
+                           callback_prepare_type callback) const override {
         check_noise_action(noise_action::WRITE_MESSAGE);
 
         try {
@@ -176,7 +176,8 @@ public:
             throw;
         }
     }
-    constexpr void handle(packet_type &pckt, callback_handle_t callback) const override {
+    constexpr void handle(packet_type &pckt, buffer_address_type addr,
+                          callback_handle_type callback) const override {
         check_noise_action(noise_action::READ_MESSAGE);
 
         try {
@@ -232,24 +233,22 @@ using noise_handshake_packet =
     packet<noise_handshake_packet_type, noise_handshake_protocol_type<relation_type>>;
 using payload_packet = packet<payload_packet_type, payload_protocol_type>;
 
-template<ntn_relation relation_type>
-struct noise_handshake_action final
-    : public action<noise_handshake_packet<relation_type>> {
-    using packet = noise_handshake_action<relation_type>::packet;
+struct noise_handshake_action final : public action<noise_handshake_packet_type> {
+    using packet_type = noise_handshake_action::packet_type;
 
 public:
-    constexpr void init_packet(packet::packet_type &pckt) override {}
-    constexpr void process_packet(packet::packet_type &&pckt) override {}
+    constexpr void init_packet(packet_type &pckt) override {}
+    constexpr void process_packet(packet_type &&pckt) override {}
 };
 
-struct payload_action final : action<payload_packet> {
+struct payload_action final : action<payload_packet_type> {
     static constexpr std::size_t max_stream_size = max_jitter_size;
 
 public:
-    constexpr void init_packet(packet::packet_type &pckt) override {
+    constexpr void init_packet(packet_type &pckt) override {
         audio.pop(pckt->payload.audio_buffer);
     }
-    constexpr void process_packet(packet::packet_type &&pckt) override {
+    constexpr void process_packet(packet_type &&pckt) override {
         audio.push(std::move(pckt->payload.audio_buffer), pckt->payload.lost);
     }
 

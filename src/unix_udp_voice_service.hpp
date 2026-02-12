@@ -21,9 +21,8 @@ public:
     using noise_handshake_packet = protocol::noise_handshake_packet<relation_type>;
     using payload_packet         = protocol::payload_packet;
 
-    template<ntn_relation relation_type>
-    using stream_tcp_type =
-        net_stream_tcp<protocol::noise_handshake_action<relation_type>, v>;
+    using stream_tcp_type = net_stream_tcp<protocol::noise_handshake_action, v>;
+    using acceptor_type   = stream_tcp_type::acceptor_type;
     using stream_udp_type = net_stream_udp<protocol::payload_action, v>;
     using address_type    = stream_udp_type::address_type;
 
@@ -49,8 +48,7 @@ private:
     static void run_payload_consume(TUDPStream &udp_stream, address_type addr);
 
     template<ntn_relation relation_type>
-    static void noise_handshake(stream_tcp_type<relation_type> &tcp_stream,
-                                config_type                   &&config);
+    static void noise_handshake(stream_tcp_type &tcp_stream, config_type &&config);
 
 private:
     static constexpr noheap::log_impl::owner_impl::buffer_type buffer_owner =
@@ -73,8 +71,8 @@ unix_udp_voice_service::unix_udp_voice_service(address_type      &&_addr,
     : addr(_addr), tcp_port(_port), udp_port(tcp_port + 1), udp_stream(io, udp_port) {
 }
 template<ntn_relation relation_type>
-void unix_udp_voice_service::noise_handshake(stream_tcp_type<relation_type> &tcp_stream,
-                                             config_type                   &&config) {
+void unix_udp_voice_service::noise_handshake(stream_tcp_type &tcp_stream,
+                                             config_type    &&config) {
     using packet_type        = noise_handshake_packet<relation_type>;
     using noise_context_type = protocol::noise_context_type<relation_type>;
     packet_type pckt;
@@ -118,12 +116,16 @@ void unix_udp_voice_service::run() {
                 const auto &noise_handshake_prt =
                     noise_handshake_packet<ntn_relation::PTU>::get_protocol();
 
-                noise_context<ntn_relation::PTU>   noise_ctx(config.pattern, config.role);
-                stream_tcp_type<ntn_relation::PTU> tcp_stream(io, tcp_port);
+                noise_context<ntn_relation::PTU> noise_ctx(config.pattern, config.role);
+                stream_tcp_type                  tcp_stream(io, tcp_port);
 
                 if (!tcp_stream.wait_connect({addr, tcp_port})) {
                     log.to_console("Listen...");
-                    tcp_stream.wait_accept();
+
+                    tcp_stream.close();
+
+                    acceptor_type ac(io, tcp_port);
+                    ac.accept(tcp_stream);
                 }
 
                 noise_handshake_prt.set_noise_context(noise_ctx);

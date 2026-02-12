@@ -4,6 +4,7 @@ option(SNDIO "Use sndio audio interface." OFF)
 
 set(UUV unix_udp_voice)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS YES)
 set(CMAKE_CXX_STANDARD 23)
 file(GLOB_RECURSE SRC_FILES src/*.cpp)
 
