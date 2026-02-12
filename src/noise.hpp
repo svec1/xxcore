@@ -118,11 +118,11 @@ private:
     static constexpr log_handler log{buffer_owner};
 
 public:
+    static constexpr std::size_t max_buffer_name_id_size = 64;
     static constexpr std::size_t handshake_packet_size   = 512;
     static constexpr std::size_t prologue_extention_size = 16;
     static constexpr std::size_t pre_shared_key_size     = 32;
     static constexpr std::size_t dh_key_size = get_key_size<nid_static.dh_id>();
-    static constexpr std::size_t max_buffer_name_id_size = 64;
 
     using buffer_handshake_packet_type =
         noheap::buffer_bytes_type<handshake_packet_size, std::uint8_t>;
@@ -149,6 +149,10 @@ private:
                   .hybrid  = nid_static.hybrid_id,
                   .pattern = 0,
                   .ext     = {}};
+
+public:
+    static constexpr std::size_t prologue_size = sizeof(prologue);
+    using buffer_prologue_type                 = noheap::buffer_bytes_type<prologue_size>;
 
 public:
     struct local_keypair_type {
@@ -224,7 +228,8 @@ public:
     void get_handshake_message();
 
 public:
-    void set_prologue(prologue_extention_type &&ext);
+    void                 set_prologue(prologue_extention_type &&ext);
+    buffer_prologue_type get_prologue();
 
     void set_local_keypair(const local_keypair_type &kp);
     void set_remote_public_key(dh_key_type &&key);
@@ -262,6 +267,9 @@ void noise_context<_relation_type>::noise_buffer_view::set_buffer(
 
 template<ntn_relation _relation_type>
 noise_context<_relation_type>::cipher_state::~cipher_state() {
+    if (!randstate)
+        return;
+
     noise_randstate_free(randstate);
     noise_cipherstate_free(send_cipher);
     noise_cipherstate_free(receive_cipher);
@@ -395,6 +403,13 @@ void noise_context<_relation_type>::set_prologue(prologue_extention_type &&ext) 
              handshakestate, reinterpret_cast<char *>(&prologue), sizeof(prologue)))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to set prologue");
+}
+template<ntn_relation _relation_type>
+noise_context<_relation_type>::buffer_prologue_type
+    noise_context<_relation_type>::get_prologue() {
+    buffer_prologue_type buffer_tmp;
+    std::copy(buffer_tmp.begin(), buffer_tmp.end(), reinterpret_cast<char *>(&prologue));
+    return buffer_tmp;
 }
 template<ntn_relation _relation_type>
 void noise_context<_relation_type>::set_pre_shared_key(pre_shared_key_type &&key) {

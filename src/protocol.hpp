@@ -170,9 +170,6 @@ public:
                                         pckt.size()),
                 0);
             noise_ctx_p->set_handshake_message();
-
-            this->log.to_console("Was sent: {}", std::span<std::int8_t>(pckt.data(), 49));
-
         } catch (noheap::runtime_error &excp) {
             excp.set_owner(buffer_owner);
             throw;
@@ -183,9 +180,6 @@ public:
         check_noise_action(noise_action::READ_MESSAGE);
 
         try {
-            this->log.to_console("Was received: {}",
-                                 std::span<std::int8_t>(pckt.data(), 49));
-
             noise_ctx_p->get_handshake_buffer().set_buffer(
                 std::span<std::uint8_t>(reinterpret_cast<std::uint8_t *>(pckt.data()),
                                         pckt.size()),

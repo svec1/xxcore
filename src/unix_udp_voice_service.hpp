@@ -63,8 +63,11 @@ private:
     asio::ip::port_type tcp_port;
     asio::ip::port_type udp_port;
     stream_udp_type     udp_stream;
-    openssl_context     ossl_ctx;
+
+    static openssl_context ossl_ctx;
 };
+
+openssl_context unix_udp_voice_service::ossl_ctx;
 
 unix_udp_voice_service::unix_udp_voice_service(address_type      &&_addr,
                                                asio::ip::port_type _port)
@@ -79,12 +82,16 @@ void unix_udp_voice_service::noise_handshake(stream_tcp_type &tcp_stream,
 
     auto &noise_ctx =
         noise_handshake_packet<ntn_relation::PTU>::get_protocol().get_noise_context();
+    noise_ctx.set_prologue({});
 
-    auto noise_name_id = noise_ctx.get_name_id();
+    auto noise_name_id       = noise_ctx.get_name_id();
+    auto noise_prologue      = noise_ctx.get_prologue();
+    auto noise_prologue_hash = ossl_ctx.to_hex_string<openssl_context::algorithm::SHA1>(
+        ossl_ctx.get_hash<openssl_context::algorithm::SHA1>(
+            std::string_view(noise_prologue.data(), noise_prologue.size())));
     log.to_all("Starting noise handshake: {}",
                std::string_view(noise_name_id.data(), noise_name_id.size()));
-
-    noise_ctx.set_prologue({});
+    log.to_all("Handshake prologue: {}", noise_prologue_hash.data());
 
     noise_ctx.set_local_keypair(
         {noheap::to_new_array<typename noise_context_type::dh_key_type>(

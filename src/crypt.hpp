@@ -29,6 +29,9 @@ public:
         using type = buffer_type<get_hash_size<algorithm_crypt>()>;
     };
 
+    static constexpr std::size_t max_hash_hex_size = 256;
+    using buffer_hash_hex_type = noheap::buffer_bytes_type<max_hash_hex_size>;
+
 public:
     openssl_context();
     ~openssl_context();
@@ -36,6 +39,9 @@ public:
 public:
     template<algorithm algorithm_crypt>
     hash<algorithm_crypt>::type get_hash(std::string_view data);
+
+    template<algorithm algorithm_crypt>
+    static buffer_hash_hex_type to_hex_string(hash<algorithm_crypt>::type &&hash);
 
     template<std::size_t buffer_size>
     static buffer_type<buffer_size> get_random_bytes();
@@ -75,16 +81,27 @@ openssl_context::hash<algorithm_crypt>::type
     else if constexpr (algorithm_crypt == algorithm::MD5)
         algorithm_ctx = EVP_md5();
 
-    if (EVP_DigestInit_ex(ctx, algorithm_ctx, nullptr) != 1)
+    if (!EVP_DigestInit_ex(ctx, algorithm_ctx, nullptr))
         throw noheap::runtime_error(buffer_owner, "Failed to set SHA1 alghorithm.");
-    if (EVP_DigestUpdate(ctx, buffer.data(), buffer.size()) != 1)
+    if (!EVP_DigestUpdate(ctx, buffer.data(), buffer.size()))
         throw noheap::runtime_error(buffer_owner,
                                     "Failed to set data for openssl context.");
 
     typename hash<algorithm_crypt>::type buffer_tmp;
-    if (EVP_DigestFinal_ex(ctx, buffer_tmp.data(), nullptr) != 1)
+    if (!EVP_DigestFinal_ex(ctx, buffer_tmp.data(), nullptr))
         throw noheap::runtime_error(buffer_owner, "Failed to calculate hash.");
 
+    return buffer_tmp;
+}
+template<openssl_context::algorithm algorithm_crypt>
+openssl_context::buffer_hash_hex_type
+    openssl_context::to_hex_string(hash<algorithm_crypt>::type &&hash) {
+    buffer_hash_hex_type buffer_tmp{};
+
+    if (!OPENSSL_buf2hexstr_ex(buffer_tmp.data(), buffer_tmp.size(), NULL, hash.data(),
+                               hash.size(), '\0'))
+        throw noheap::runtime_error(buffer_owner,
+                                    "Failed to convert hash bytes to hex string.");
     return buffer_tmp;
 }
 template<std::size_t size>
