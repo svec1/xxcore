@@ -538,8 +538,7 @@ void net_stream_tcp<Action, v>::receive(TPacket &pckt) {
 }
 template<Derived_from_action Action, ipv v>
 bool net_stream_tcp<Action, v>::wait_connect(const endpoint_type &endpoint) {
-    net_stream_tcp<Action, v> stream_tmp(this->io, this->port);
-    system::error_code        ec;
+    system::error_code ec;
 
     this->connect(endpoint, ec);
 

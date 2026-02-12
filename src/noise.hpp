@@ -122,6 +122,7 @@ public:
     static constexpr std::size_t prologue_extention_size = 16;
     static constexpr std::size_t pre_shared_key_size     = 32;
     static constexpr std::size_t dh_key_size = get_key_size<nid_static.dh_id>();
+    static constexpr std::size_t max_buffer_name_id_size = 64;
 
     using buffer_handshake_packet_type =
         noheap::buffer_bytes_type<handshake_packet_size, std::uint8_t>;
@@ -129,6 +130,8 @@ public:
     using prologue_extention_type = buffer_key_type<prologue_extention_size>;
     using pre_shared_key_type     = buffer_key_type<pre_shared_key_size>;
     using dh_key_type             = buffer_key_type<dh_key_size>;
+
+    using name_id = noheap::buffer_bytes_type<max_buffer_name_id_size>;
 
 private:
     struct {
@@ -143,7 +146,8 @@ private:
                   .psk    = nid_static.prefix_id,
                   .dh     = nid_static.dh_id,
                   .hash   = nid_static.hash_id,
-                  .hybrid = nid_static.hybrid_id};
+                  .hybrid = nid_static.hybrid_id,
+                  .ext    = {}};
 
 public:
     struct local_keypair_type {
@@ -212,6 +216,7 @@ public:
     cipher_state       get_cipher_state();
 
 public:
+    name_id      get_name_id() const;
     std::ssize_t get_action();
 
     void set_handshake_message();
@@ -231,6 +236,7 @@ private:
     static void handle_error(std::size_t error, std::string_view extention_error);
 
 private:
+    NoiseProtocolId      nid;
     NoiseHandshakeState *handshakestate = nullptr;
 
     noise_buffer_view handshake_buffer{};
@@ -289,14 +295,14 @@ void noise_context<_relation_type>::cipher_state::check_completed_handshake() {
 }
 
 template<ntn_relation _relation_type>
-noise_context<_relation_type>::noise_context(noise_pattern pattern, noise_role role) {
-    NoiseProtocolId nid = {.prefix_id  = nid_static.prefix_id,
-                           .pattern_id = static_cast<std::uint16_t>(pattern),
-                           .dh_id      = nid_static.dh_id,
-                           .cipher_id  = nid_static.cipher_id,
-                           .hash_id    = nid_static.hash_id,
-                           .hybrid_id  = nid_static.hybrid_id};
-
+noise_context<_relation_type>::noise_context(noise_pattern pattern, noise_role role)
+    : nid{.prefix_id  = nid_static.prefix_id,
+          .pattern_id = static_cast<std::uint16_t>(pattern),
+          .dh_id      = nid_static.dh_id,
+          .cipher_id  = nid_static.cipher_id,
+          .hash_id    = nid_static.hash_id,
+          .hybrid_id  = nid_static.hybrid_id,
+          .reserved   = {0}} {
     prologue.pattern = nid.pattern_id;
 
     if (ptu && !is_ptu(pattern) || !ptu && is_ptu(pattern))
@@ -349,6 +355,14 @@ noise_context<_relation_type>::cipher_state
     return std::move(cipher_st);
 }
 
+template<ntn_relation _relation_type>
+noise_context<_relation_type>::name_id
+    noise_context<_relation_type>::get_name_id() const {
+    name_id buffer_tmp;
+    noise_protocol_id_to_name(buffer_tmp.data(), buffer_tmp.size(), &nid);
+
+    return buffer_tmp;
+}
 template<ntn_relation _relation_type>
 std::ssize_t noise_context<_relation_type>::get_action() {
     return noise_handshakestate_get_action(handshakestate);

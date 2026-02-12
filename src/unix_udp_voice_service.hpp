@@ -92,6 +92,10 @@ void unix_udp_voice_service::noise_handshake(stream_tcp_type &tcp_stream,
         noheap::to_new_array<typename noise_context_type::pre_shared_key_type>(
             config.pre_shared_key));
 
+    auto noise_name_id = noise_ctx.get_name_id();
+    log.to_all("Starting noise handshake: {}",
+               std::string_view(noise_name_id.data(), noise_name_id.size()));
+
     noise_ctx.set_prologue({});
     noise_ctx.start();
     while (true) {
