@@ -136,14 +136,14 @@ public:
 private:
     struct {
         std::uint16_t           cipher;
-        std::uint16_t           psk;
+        std::uint16_t           prefix;
         std::uint16_t           dh;
         std::uint16_t           hash;
         std::uint16_t           hybrid;
         std::uint16_t           pattern;
         prologue_extention_type ext;
     } prologue = {.cipher  = nid_static.cipher_id,
-                  .psk     = nid_static.prefix_id,
+                  .prefix  = nid_static.prefix_id,
                   .dh      = nid_static.dh_id,
                   .hash    = nid_static.hash_id,
                   .hybrid  = nid_static.hybrid_id,
@@ -407,7 +407,7 @@ void noise_context<_relation_type>::set_prologue(prologue_extention_type &&ext) 
 template<ntn_relation _relation_type>
 noise_context<_relation_type>::buffer_prologue_type
     noise_context<_relation_type>::get_prologue() {
-    buffer_prologue_type buffer_tmp;
+    buffer_prologue_type buffer_tmp{};
     std::copy(buffer_tmp.begin(), buffer_tmp.end(), reinterpret_cast<char *>(&prologue));
     return buffer_tmp;
 }

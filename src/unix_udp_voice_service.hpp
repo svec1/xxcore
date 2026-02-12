@@ -87,7 +87,7 @@ void unix_udp_voice_service::noise_handshake(stream_tcp_type &tcp_stream,
     auto noise_name_id       = noise_ctx.get_name_id();
     auto noise_prologue      = noise_ctx.get_prologue();
     auto noise_prologue_hash = noheap::to_hex_string<noheap::buffer_bytes_type<256>>(
-        ossl_ctx.get_hash<openssl_context::algorithm::SHA1>(
+        ossl_ctx.get_hash<openssl_context::algorithm::MD5>(
             std::string_view(noise_prologue.data(), noise_prologue.size())));
     log.to_all("Starting noise handshake: {}",
                std::string_view(noise_name_id.data(), noise_name_id.size()));
