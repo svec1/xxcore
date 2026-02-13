@@ -17,11 +17,11 @@ static constexpr std::size_t max_buffer_address_size =
 
 using buffer_address_type = asio::ip::address_v6::bytes_type;
 
-template<typename T>
+template<typename T, std::size_t ad_size>
 struct packet_native_type;
 template<typename T>
 concept Packet_native_t =
-    std::same_as<T, packet_native_type<typename T::extention_data_type>>;
+    std::same_as<T, packet_native_type<typename T::extention_data_type, T{}.ad_size()>>;
 
 template<Packet_native_t T, noheap::log_impl::owner_impl::buffer_type _buffer_owner =
                                 noheap::log_impl::create_owner("PROTOCOL")>
@@ -35,27 +35,41 @@ struct action;
 template<typename T>
 concept Derived_from_action = std::derived_from<T, action<typename T::packet_type>>;
 
-template<typename T>
+template<typename T, std::size_t _ad_size>
 struct packet_native_type {
 public:
     using extention_data_type = T;
+    using ad_type             = noheap::buffer_bytes_type<_ad_size>;
     using represent_type      = std::int8_t;
 
 public:
     packet_native_type() = default;
 
-    extention_data_type *operator->() noexcept { return extention_data_p; }
+    extention_data_type *operator->() noexcept { return _extention_data_p; }
 
+public:
     constexpr std::size_t size() const noexcept {
-        return sizeof(extention_data_type) - sizeof(extention_data_type *);
+        return sizeof(*this) - sizeof(_extention_data_p);
     }
+    constexpr std::size_t ad_size() const noexcept { return _ad_size; }
+    constexpr std::size_t extention_size() const noexcept {
+        return sizeof(_extention_data);
+    }
+
+public:
     constexpr represent_type *data() noexcept {
         return reinterpret_cast<represent_type *>(this);
     }
+    constexpr represent_type *extention_data() noexcept {
+        return reinterpret_cast<represent_type *>(&_extention_data);
+    }
+
+public:
+    ad_type payload_ad;
 
 private:
-    extention_data_type  extention_data;
-    extention_data_type *extention_data_p = &extention_data;
+    extention_data_type  _extention_data;
+    extention_data_type *_extention_data_p = &_extention_data;
 };
 
 template<Packet_native_t TPacket>
@@ -101,7 +115,7 @@ struct debug_extention {
     };
 
 public:
-    using packet_type = packet_native_type<extention_data_type>;
+    using packet_type = packet_native_type<extention_data_type, 0>;
 
     struct protocol_type
         : public protocol_native_type<packet_type,
@@ -290,7 +304,7 @@ void net_stream_basic<TSocket, Action, v>::init_socket(
     stream.socket.set_option(typename socket_type::broadcast(false));
 
     stream.socket.bind({get_ipv(), port}, ec);
-    if (ec.value())
+    if (ec.value() && ec != asio::error::address_in_use)
         handle_error(ec);
 }
 template<Socket TSocket, Derived_from_action Action, ipv v>

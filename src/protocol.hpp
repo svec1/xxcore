@@ -44,11 +44,14 @@ public:
     noheap::buffer_bytes_type<max_payload_data_size - payload_data_size> padding;
 };
 
+using payload_size_ad_type           = std::size_t;
+static constexpr std::size_t ad_size = sizeof(payload_size_ad_type);
+
 template<ntn_relation relation_type>
 using noise_context_type          = noise_context<relation_type>;
-using payload_packet_type         = packet_native_type<extention_data_type>;
+using payload_packet_type         = packet_native_type<extention_data_type, ad_size>;
 using noise_handshake_packet_type = packet_native_type<
-    noise_context_type<ntn_relation::PTU>::buffer_handshake_packet_type>;
+    noise_context_type<ntn_relation::PTU>::buffer_handshake_packet_type, ad_size>;
 
 struct payload_protocol_type
     : public protocol_native_type<payload_packet_type,
@@ -69,10 +72,15 @@ public:
             pckt->payload.sequence_number = local_sequence_number++;
             pckt->payload.uuids[0]        = uuid;
 
-            cipher_state->input_buffer.set_buffer(
-                {reinterpret_cast<std::uint8_t *>(pckt.data()), pckt.size()},
-                packet_type::extention_data_type::payload_data_size);
+            cipher_state->input_buffer.set(
+                {reinterpret_cast<std::uint8_t *>(pckt.extention_data()),
+                 pckt.extention_size()},
+                pckt.extention_size());
             cipher_state->encrypt();
+
+            pckt.payload_ad = noheap::to_buffer<packet_type::ad_type>(
+                cipher_state->input_buffer.get().size);
+
         } catch (noheap::runtime_error &excp) {
             excp.set_owner(buffer_owner);
             throw;
@@ -83,9 +91,10 @@ public:
                payload_protocol_type::callback_handle_type callback) const override {
         check_cipher_state();
         try {
-            cipher_state->output_buffer.set_buffer(
-                {reinterpret_cast<std::uint8_t *>(pckt.data()), pckt.size()},
-                pckt.size());
+            cipher_state->output_buffer.set(
+                {reinterpret_cast<std::uint8_t *>(pckt.extention_data()),
+                 pckt.extention_size()},
+                noheap::represent_bytes<payload_size_ad_type>(pckt.payload_ad));
             cipher_state->decrypt();
 
             buffer.push(pckt, pckt->payload.sequence_number);
@@ -165,11 +174,20 @@ public:
         check_noise_action(noise_action::WRITE_MESSAGE);
 
         try {
-            noise_ctx_p->get_handshake_buffer().set_buffer(
-                std::span<std::uint8_t>(reinterpret_cast<std::uint8_t *>(pckt.data()),
-                                        pckt.size()),
+            noise_ctx_p->get_handshake_buffer().set(
+                std::span<std::uint8_t>(
+                    reinterpret_cast<std::uint8_t *>(pckt.extention_data()),
+                    pckt.extention_size()),
                 0);
             noise_ctx_p->set_handshake_message();
+
+            pckt.payload_ad = noheap::to_buffer<packet_type::ad_type>(
+                noise_ctx_p->get_handshake_buffer().get().size);
+
+            noheap::println("Send: {}",
+                            std::span(pckt.extention_data(),
+                                      noheap::represent_bytes<payload_size_ad_type>(
+                                          pckt.payload_ad)));
         } catch (noheap::runtime_error &excp) {
             excp.set_owner(buffer_owner);
             throw;
@@ -178,12 +196,17 @@ public:
     constexpr void handle(packet_type &pckt, buffer_address_type addr,
                           callback_handle_type callback) const override {
         check_noise_action(noise_action::READ_MESSAGE);
+        noheap::println(
+            "Receive: {}",
+            std::span(pckt.extention_data(),
+                      noheap::represent_bytes<payload_size_ad_type>(pckt.payload_ad)));
 
         try {
-            noise_ctx_p->get_handshake_buffer().set_buffer(
-                std::span<std::uint8_t>(reinterpret_cast<std::uint8_t *>(pckt.data()),
-                                        pckt.size()),
-                pckt.size());
+            noise_ctx_p->get_handshake_buffer().set(
+                std::span<std::uint8_t>(
+                    reinterpret_cast<std::uint8_t *>(pckt.extention_data()),
+                    pckt.extention_size()),
+                noheap::represent_bytes<payload_size_ad_type>(pckt.payload_ad));
             noise_ctx_p->get_handshake_message();
         } catch (noheap::runtime_error &excp) {
             excp.set_owner(buffer_owner);

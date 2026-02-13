@@ -86,7 +86,7 @@ void unix_udp_voice_service::set_noise_handshake(
     noise_handshake_packet<relation_type>::get_protocol().set_noise_context(noise_ctx);
 
     noise_ctx.init(config.pattern, config.role);
-    noise_ctx.set_prologue({});
+    // noise_ctx.set_prologue({});
 
     auto noise_name_id       = noise_ctx.get_name_id();
     auto noise_prologue      = noise_ctx.get_prologue();
@@ -99,15 +99,15 @@ void unix_udp_voice_service::set_noise_handshake(
     log.to_all("Handshake prologue: {}", noise_prologue_hash.data());
 
     noise_ctx.set_local_keypair(
-        {noheap::to_new_array<typename noise_context_type::dh_key_type>(
+        {noheap::to_new_buffer<typename noise_context_type::dh_key_type>(
              config.local_private_key),
-         noheap::to_new_array<typename noise_context_type::dh_key_type>(
+         noheap::to_new_buffer<typename noise_context_type::dh_key_type>(
              config.local_public_key)});
     noise_ctx.set_remote_public_key(
-        noheap::to_new_array<typename noise_context_type::dh_key_type>(
+        noheap::to_new_buffer<typename noise_context_type::dh_key_type>(
             config.remote_public_key));
     noise_ctx.set_pre_shared_key(
-        noheap::to_new_array<typename noise_context_type::pre_shared_key_type>(
+        noheap::to_new_buffer<typename noise_context_type::pre_shared_key_type>(
             config.pre_shared_key));
 
     noise_ctx.start();
@@ -136,7 +136,7 @@ void unix_udp_voice_service::run() {
             noise_context<ntn_relation::PTU>::cipher_state payload_cipher_state;
             const auto &payload_prt = payload_packet::get_protocol();
 
-            log.to_all("Connecting to {}:{}...", addr.to_string(), tcp_port);
+            log.to_all("Connecting to {}...", addr.to_string());
             {
                 stream_tcp_type tcp_stream(io, tcp_port);
 

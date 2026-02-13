@@ -41,26 +41,39 @@ using buffer_bytes_type = std::array<T, buffer_size>;
 template<typename T>
 concept Buffer_bytes_type =
     std::same_as<std::decay_t<T>,
-                 buffer_bytes_type<sizeof(T), typename std::decay_t<T>::value_type>>;
+                 buffer_bytes_type<T{}.size(), typename std::decay_t<T>::value_type>>;
 
 template<typename T>
 concept Buffer =
     std::same_as<std::decay_t<T>,
                  std::array<typename std::decay_t<T>::value_type, sizeof(T)>>;
 
+template<Buffer TReturn, typename TSource>
+    requires(TReturn{}.size() >= sizeof(TSource))
+constexpr TReturn to_buffer(TSource el) {
+    TReturn buffer_tmp{};
+
+    auto begin = reinterpret_cast<std::int8_t *>(&el);
+    auto end   = reinterpret_cast<std::int8_t *>(&el) + sizeof(TSource);
+
+    std::copy(begin, end, buffer_tmp.begin());
+
+    return buffer_tmp;
+}
+
 template<Buffer TReturn, Buffer TSource>
-constexpr TReturn to_new_array(TSource &&array) {
-    TReturn                                  array_tmp{};
-    typename std::decay_t<TSource>::iterator begin = array.begin();
-    typename std::decay_t<TSource>::iterator end   = begin;
+constexpr TReturn to_new_buffer(TSource &&buffer) {
+    TReturn buffer_tmp{};
+    auto    begin = buffer.begin();
+    auto    end   = begin;
 
-    if constexpr (array.size() >= array_tmp.size())
-        end += array_tmp.size();
+    if constexpr (buffer.size() >= buffer_tmp.size())
+        end += buffer_tmp.size();
     else
-        end += array.size();
+        end += buffer.size();
 
-    std::copy(begin, end, array_tmp.begin());
-    return array_tmp;
+    std::copy(begin, end, buffer_tmp.begin());
+    return buffer_tmp;
 }
 
 template<Buffer TReturn, Buffer TSource>
@@ -73,6 +86,13 @@ constexpr TReturn to_hex_string(TSource &&buffer) {
         it = std::format_to_n(it, 2, "{:X}", ch).out;
 
     return buffer_tmp;
+}
+
+template<typename TReturn, Buffer TSource>
+    requires(!std::is_pointer_v<TReturn>
+             && std::decay_t<TSource>{}.size() == sizeof(TReturn))
+constexpr TReturn represent_bytes(TSource &&buffer) {
+    return *reinterpret_cast<TReturn *>(buffer.data());
 }
 
 class print_impl final {

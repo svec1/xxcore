@@ -167,7 +167,8 @@ public:
         constexpr NoiseBuffer &operator*() noexcept;
 
     public:
-        void set_buffer(std::span<std::uint8_t> buffer, std::size_t payload_size);
+        void               set(std::span<std::uint8_t> buffer, std::size_t payload_size);
+        const NoiseBuffer &get() const;
 
     private:
         NoiseBuffer buffer{};
@@ -266,9 +267,13 @@ constexpr NoiseBuffer &
 }
 
 template<ntn_relation _relation_type>
-void noise_context<_relation_type>::noise_buffer_view::set_buffer(
-    std::span<std::uint8_t> buffer, std::size_t payload_size) {
+void noise_context<_relation_type>::noise_buffer_view::set(std::span<std::uint8_t> buffer,
+                                                           std::size_t payload_size) {
     noise_buffer_set_inout(this->buffer, buffer.data(), payload_size, buffer.size());
+}
+template<ntn_relation _relation_type>
+const NoiseBuffer &noise_context<_relation_type>::noise_buffer_view::get() const {
+    return this->buffer;
 }
 
 template<ntn_relation _relation_type>
