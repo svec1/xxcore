@@ -48,7 +48,9 @@ private:
     static void run_payload_consume(TUDPStream &udp_stream, address_type addr);
 
     template<ntn_relation relation_type>
-    static void noise_handshake(stream_tcp_type &tcp_stream, config_type &&config);
+    static void
+        set_noise_handshake(stream_tcp_type &tcp_stream, config_type &&config,
+                            noise_context<relation_type>::cipher_state &cipher_state);
 
 private:
     static constexpr noheap::log_impl::owner_impl::buffer_type buffer_owner =
@@ -56,7 +58,7 @@ private:
     static constexpr log_handler log{buffer_owner};
 
 private:
-    config_type config;
+    config_type config{};
 
     asio::io_context    io;
     address_type        addr;
@@ -74,14 +76,16 @@ unix_udp_voice_service::unix_udp_voice_service(address_type      &&_addr,
     : addr(_addr), tcp_port(_port), udp_port(tcp_port + 1), udp_stream(io, udp_port) {
 }
 template<ntn_relation relation_type>
-void unix_udp_voice_service::noise_handshake(stream_tcp_type &tcp_stream,
-                                             config_type    &&config) {
-    using packet_type        = noise_handshake_packet<relation_type>;
+void unix_udp_voice_service::set_noise_handshake(
+    stream_tcp_type &tcp_stream, config_type &&config,
+    noise_context<relation_type>::cipher_state &cipher_state) {
     using noise_context_type = protocol::noise_context_type<relation_type>;
-    packet_type pckt{};
 
-    auto &noise_ctx =
-        noise_handshake_packet<ntn_relation::PTU>::get_protocol().get_noise_context();
+    static noise_context_type noise_ctx;
+
+    noise_handshake_packet<relation_type>::get_protocol().set_noise_context(noise_ctx);
+
+    noise_ctx.init(config.pattern, config.role);
     noise_ctx.set_prologue({});
 
     auto noise_name_id       = noise_ctx.get_name_id();
@@ -89,6 +93,7 @@ void unix_udp_voice_service::noise_handshake(stream_tcp_type &tcp_stream,
     auto noise_prologue_hash = noheap::to_hex_string<noheap::buffer_bytes_type<256>>(
         ossl_ctx.get_hash<openssl_context::algorithm::MD5>(
             std::string_view(noise_prologue.data(), noise_prologue.size())));
+
     log.to_all("Starting noise handshake: {}",
                std::string_view(noise_name_id.data(), noise_name_id.size()));
     log.to_all("Handshake prologue: {}", noise_prologue_hash.data());
@@ -106,6 +111,8 @@ void unix_udp_voice_service::noise_handshake(stream_tcp_type &tcp_stream,
             config.pre_shared_key));
 
     noise_ctx.start();
+
+    noise_handshake_packet<relation_type> pckt{};
     while (true) {
         auto action = noise_ctx.get_action();
         if (action == noise_action::WRITE_MESSAGE)
@@ -115,38 +122,36 @@ void unix_udp_voice_service::noise_handshake(stream_tcp_type &tcp_stream,
         else
             break;
     }
+
     noise_ctx.stop();
+    cipher_state = noise_ctx.get_cipher_state();
+
+    noise_ctx.dump();
+
+    log.to_all("Noise handshake is completed.");
 }
 void unix_udp_voice_service::run() {
     try {
         if (is_ptu(config.pattern)) {
+            noise_context<ntn_relation::PTU>::cipher_state payload_cipher_state;
             const auto &payload_prt = payload_packet::get_protocol();
 
-            noise_context<ntn_relation::PTU>::cipher_state cipher_state;
-
+            log.to_all("Connecting to {}:{}...", addr.to_string(), tcp_port);
             {
-                const auto &noise_handshake_prt =
-                    noise_handshake_packet<ntn_relation::PTU>::get_protocol();
-
-                noise_context<ntn_relation::PTU> noise_ctx(config.pattern, config.role);
-                stream_tcp_type                  tcp_stream(io, tcp_port);
+                stream_tcp_type tcp_stream(io, tcp_port);
 
                 if (!tcp_stream.wait_connect({addr, tcp_port})) {
-                    log.to_console("Listen...");
-
                     tcp_stream.close();
 
                     acceptor_type ac(io, tcp_port);
                     ac.accept(tcp_stream);
                 }
 
-                noise_handshake_prt.set_noise_context(noise_ctx);
-                noise_handshake<ntn_relation::PTU>(tcp_stream, std::move(config));
-
-                cipher_state = noise_ctx.get_cipher_state();
-                payload_prt.set_noise_cipher_state(cipher_state);
+                set_noise_handshake<ntn_relation::PTU>(tcp_stream, std::move(config),
+                                                       payload_cipher_state);
             }
 
+            payload_prt.set_noise_cipher_state(payload_cipher_state);
             payload_prt.set_local_sequence_number(
                 *reinterpret_cast<decltype(payload_packet{}->payload.sequence_number) *>(
                     ossl_ctx
@@ -209,15 +214,15 @@ void unix_udp_voice_service::configurate(buffer_config_type &&buffer) {
     log.to_all("Setting of configurate.");
 
     {
-        constexpr std::string_view role_string          = "role";
-        constexpr std::string_view pattern_string       = "pattern";
-        constexpr std::string_view local_private_string = "local_private_key";
-        constexpr std::string_view local_public_string  = "local_public_key";
-        constexpr std::string_view remote_public_string = "remote_public_key";
-        constexpr std::string_view pre_shared_string    = "pre_shared_key";
+        static constexpr std::string_view role_string          = "role";
+        static constexpr std::string_view pattern_string       = "pattern";
+        static constexpr std::string_view local_private_string = "local_private_key";
+        static constexpr std::string_view local_public_string  = "local_public_key";
+        static constexpr std::string_view remote_public_string = "remote_public_key";
+        static constexpr std::string_view pre_shared_string    = "pre_shared_key";
 
         noheap::buffer_bytes_type<8192, std::uint8_t> json_buffer_tmp;
-        noheap::buffer_bytes_type<1024>               buffer_tmp;
+        noheap::buffer_bytes_type<1024>               buffer_tmp{};
 
         json::static_resource json_mr(json_buffer_tmp.data(), json_buffer_tmp.size());
 

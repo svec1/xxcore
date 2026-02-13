@@ -11,9 +11,10 @@ file(GLOB_RECURSE SRC_FILES src/*.cpp)
 project(${UUV})
 add_executable(${UUV} ${SRC_FILES})
         
-find_package(OpenSSL)	
 set(OPUS_BUILD_SHARED_LIBRARY ON)
+set(OPUS_USE_ALLOCA ON)
 add_subdirectory(thirdparty/opus)	
+find_package(OpenSSL)	
 
 set(NOISE_C_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/noise-c)
 set(OPUS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/opus)

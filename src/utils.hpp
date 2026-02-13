@@ -50,11 +50,11 @@ concept Buffer =
 
 template<Buffer TReturn, Buffer TSource>
 constexpr TReturn to_new_array(TSource &&array) {
-    TReturn                                  array_tmp;
+    TReturn                                  array_tmp{};
     typename std::decay_t<TSource>::iterator begin = array.begin();
     typename std::decay_t<TSource>::iterator end   = begin;
 
-    if (array.size() >= array_tmp.size())
+    if constexpr (array.size() >= array_tmp.size())
         end += array_tmp.size();
     else
         end += array.size();

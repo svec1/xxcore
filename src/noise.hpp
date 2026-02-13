@@ -177,9 +177,10 @@ public:
         friend class noise_context<_relation_type>;
 
     public:
+        cipher_state(cipher_state &&handle);
+        cipher_state &operator=(cipher_state &&);
+
         cipher_state()                                = default;
-        cipher_state(cipher_state &&handle)           = default;
-        cipher_state &operator=(cipher_state &&)      = default;
         cipher_state(const cipher_state &)            = delete;
         cipher_state &operator=(const cipher_state &) = delete;
 
@@ -191,6 +192,7 @@ public:
 
     private:
         void check_completed_handshake();
+        void dump();
 
     public:
         noise_buffer_view input_buffer{};
@@ -205,7 +207,7 @@ public:
     };
 
 public:
-    noise_context(noise_pattern pattern, noise_role role);
+    noise_context();
 
     noise_context(noise_context &&)                 = delete;
     noise_context(const noise_context &)            = delete;
@@ -214,6 +216,9 @@ public:
     ~noise_context();
 
 public:
+    void init(noise_pattern pattern, noise_role role);
+    void dump();
+
     void start();
     void stop();
 
@@ -242,11 +247,12 @@ private:
     static void handle_error(std::size_t error, std::string_view extention_error);
 
 private:
-    NoiseProtocolId      nid;
     NoiseHandshakeState *handshakestate = nullptr;
 
+    cipher_state cipher_st{};
+
+    NoiseProtocolId   nid;
     noise_buffer_view handshake_buffer{};
-    cipher_state      cipher_st{};
 };
 template<ntn_relation _relation_type>
 constexpr NoiseBuffer *
@@ -266,13 +272,23 @@ void noise_context<_relation_type>::noise_buffer_view::set_buffer(
 }
 
 template<ntn_relation _relation_type>
-noise_context<_relation_type>::cipher_state::~cipher_state() {
-    if (!randstate)
-        return;
+noise_context<_relation_type>::cipher_state::cipher_state(cipher_state &&handle) {
+    *this = std::move(handle);
+}
+template<ntn_relation _relation_type>
+noise_context<_relation_type>::cipher_state::cipher_state &
+    noise_context<_relation_type>::cipher_state::operator=(cipher_state &&handle) {
+    this->randstate           = std::move(handle.randstate);
+    this->send_cipher         = std::move(handle.send_cipher);
+    this->receive_cipher      = std::move(handle.receive_cipher);
+    this->completed_handshake = std::move(handle.completed_handshake);
 
-    noise_randstate_free(randstate);
-    noise_cipherstate_free(send_cipher);
-    noise_cipherstate_free(receive_cipher);
+    handle.completed_handshake = false;
+    return *this;
+}
+template<ntn_relation _relation_type>
+noise_context<_relation_type>::cipher_state::~cipher_state() {
+    this->dump();
 }
 template<ntn_relation _relation_type>
 void noise_context<_relation_type>::cipher_state::encrypt() {
@@ -302,35 +318,57 @@ void noise_context<_relation_type>::cipher_state::check_completed_handshake() {
     if (!completed_handshake)
         handle_error(0, "The handshake is not completed");
 }
+template<ntn_relation _relation_type>
+void noise_context<_relation_type>::cipher_state::dump() {
+    if (!completed_handshake)
+        return;
+
+    noise_randstate_free(randstate);
+    noise_cipherstate_free(send_cipher);
+    noise_cipherstate_free(receive_cipher);
+}
 
 template<ntn_relation _relation_type>
-noise_context<_relation_type>::noise_context(noise_pattern pattern, noise_role role)
-    : nid{.prefix_id  = nid_static.prefix_id,
-          .pattern_id = static_cast<std::uint16_t>(pattern),
-          .dh_id      = nid_static.dh_id,
-          .cipher_id  = nid_static.cipher_id,
-          .hash_id    = nid_static.hash_id,
-          .hybrid_id  = nid_static.hybrid_id,
-          .reserved   = {}} {
-    prologue.pattern = nid.pattern_id;
-
-    if (ptu && !is_ptu(pattern) || !ptu && is_ptu(pattern))
-        throw noheap::runtime_error(buffer_owner,
-                                    "Relation type doesn't follow the pattern.");
-
+noise_context<_relation_type>::noise_context() {
     std::size_t ret;
     if ((ret = noise_init()) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to init noise.");
+}
+template<ntn_relation _relation_type>
+noise_context<_relation_type>::~noise_context() {
+    this->dump();
+}
+template<ntn_relation _relation_type>
+void noise_context<_relation_type>::init(noise_pattern pattern, noise_role role) {
+    nid              = {.prefix_id  = nid_static.prefix_id,
+                        .pattern_id = static_cast<std::uint16_t>(pattern),
+                        .dh_id      = nid_static.dh_id,
+                        .cipher_id  = nid_static.cipher_id,
+                        .hash_id    = nid_static.hash_id,
+                        .hybrid_id  = nid_static.hybrid_id,
+                        .reserved   = {}};
+    prologue.pattern = nid.pattern_id;
+
+    std::size_t ret;
+    if (ptu && !is_ptu(pattern) || !ptu && is_ptu(pattern))
+        throw noheap::runtime_error(buffer_owner,
+                                    "Relation type doesn't follow the pattern.");
 
     if ((ret = noise_handshakestate_new_by_id(&handshakestate, &nid, role))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to get new state of handshake.");
 }
 template<ntn_relation _relation_type>
-noise_context<_relation_type>::~noise_context() {
-    noise_handshakestate_free(handshakestate);
-}
+void noise_context<_relation_type>::dump() {
+    if (!handshakestate)
+        return;
 
+    noise_handshakestate_free(handshakestate);
+    cipher_st.dump();
+    nid              = {};
+    handshake_buffer = {};
+    handshakestate   = nullptr;
+}
 template<ntn_relation _relation_type>
 void noise_context<_relation_type>::start() {
     std::size_t ret;
@@ -340,7 +378,7 @@ void noise_context<_relation_type>::start() {
 }
 template<ntn_relation _relation_type>
 void noise_context<_relation_type>::stop() {
-    if (this->get_action() != NOISE_ACTION_SPLIT)
+    if (this->get_action() != noise_action::SPLIT)
         handle_error(0, "Failed to complete handshake");
 
     std::size_t ret;

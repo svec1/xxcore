@@ -142,7 +142,7 @@ private:
 
 private:
     mutable jitter_buffer_type                buffer;
-    mutable noise_context_type::cipher_state *cipher_state = nullptr;
+    mutable noise_context_type::cipher_state *cipher_state;
 
     mutable bool filled = false;
 

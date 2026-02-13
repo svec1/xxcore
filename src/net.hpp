@@ -41,15 +41,14 @@ public:
     using extention_data_type = T;
     using represent_type      = std::int8_t;
 
-    static constexpr std::size_t extention_data_size = sizeof(extention_data_type);
-
 public:
     packet_native_type() = default;
 
-    extention_data_type           *operator->() noexcept { return extention_data_p; }
-    constexpr extention_data_type &operator*() const noexcept { return extention_data; }
+    extention_data_type *operator->() noexcept { return extention_data_p; }
 
-    constexpr std::size_t     size() const noexcept { return extention_data_size; }
+    constexpr std::size_t size() const noexcept {
+        return sizeof(extention_data_type) - sizeof(extention_data_type *);
+    }
     constexpr represent_type *data() noexcept {
         return reinterpret_cast<represent_type *>(this);
     }
