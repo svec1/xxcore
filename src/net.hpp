@@ -40,27 +40,38 @@ struct packet_native_type {
 public:
     using extention_data_type = T;
     using ad_type             = TAd;
-    using represent_type      = std::int8_t;
+    using represent_type      = std::byte;
 
 public:
     packet_native_type() = default;
 
+public:
+    packet_native_type(const packet_native_type &packet) { *this = packet; }
+    packet_native_type(packet_native_type &&packet) { *this = std::move(packet); }
+    packet_native_type &operator=(const packet_native_type &packet) {
+        this->payload_ad      = packet.payload_ad;
+        this->_extention_data = packet._extention_data;
+        return *this;
+    }
+    packet_native_type &operator=(packet_native_type &&packet) {
+        this->payload_ad      = std::move(packet.payload_ad);
+        this->_extention_data = std::move(packet._extention_data);
+        return *this;
+    }
+
+public:
     extention_data_type *operator->() noexcept { return _extention_data_p; }
 
 public:
-    constexpr std::size_t size() const noexcept {
-        return sizeof(*this) - sizeof(_extention_data_p);
-    }
+    constexpr std::size_t size() const noexcept { return extention_size() + ad_size(); }
     constexpr std::size_t ad_size() const noexcept { return sizeof(ad_type); }
     constexpr std::size_t extention_size() const noexcept {
         return sizeof(extention_data_type);
     }
 
 public:
-    constexpr represent_type *data() noexcept {
-        return reinterpret_cast<represent_type *>(this);
-    }
-    constexpr represent_type *extention_data() noexcept {
+    represent_type *data() noexcept { return reinterpret_cast<represent_type *>(this); }
+    represent_type *extention_data() noexcept {
         return reinterpret_cast<represent_type *>(&_extention_data);
     }
 
@@ -68,8 +79,8 @@ public:
     ad_type payload_ad;
 
 private:
-    extention_data_type  _extention_data;
-    extention_data_type *_extention_data_p = &_extention_data;
+    extention_data_type        _extention_data;
+    extention_data_type *const _extention_data_p = &_extention_data;
 };
 
 template<Packet_native_t TPacket>

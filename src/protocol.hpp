@@ -101,9 +101,8 @@ public:
                 filled = false;
 
             if (filled) {
-                auto jitter_element = buffer.pop();
-                pckt                = jitter_element.first;
-                pckt->payload.lost  = jitter_element.second;
+                auto jitter_element                = buffer.pop();
+                jitter_element.first->payload.lost = jitter_element.second;
 
                 callback(std::move(jitter_element.first));
             }
