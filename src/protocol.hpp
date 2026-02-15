@@ -7,22 +7,25 @@
 
 namespace protocol {
 
-static constexpr std::size_t max_payload_data_size        = 512;
+using ad_type = std::size_t;
+
+static constexpr std::size_t max_payload_data_size        = 512 - sizeof(ad_type);
 static constexpr std::size_t max_jitter_size              = 64;
 static constexpr std::size_t min_count_packets_for_handle = max_jitter_size / 2;
 
+static constexpr std::size_t  max_count_contributers = 4;
+static constexpr std::size_t  uuid_size              = 8;
+static constexpr std::uint8_t local_payload_value    = static_cast<int8_t>(
+    (stream_audio::default_base_audio::cfg.sample_rate
+     + stream_audio::default_base_audio::cfg.bitrate
+     + (stream_audio::default_base_audio::cfg.channels * 1000) / 1000));
+
+using uuid_type  = noheap::buffer_bytes_type<uuid_size, std::uint8_t>;
+using uuids_type = std::array<uuid_type, max_count_contributers>;
+
 struct extention_data_type {
     struct payload_data_type {
-        static constexpr std::size_t  max_count_contributers = 4;
-        static constexpr std::size_t  uuid_size              = 8;
-        static constexpr std::uint8_t local_payload_value    = static_cast<int8_t>(
-            (stream_audio::default_base_audio::cfg.sample_rate
-             + stream_audio::default_base_audio::cfg.bitrate
-             + (stream_audio::default_base_audio::cfg.channels * 1000) / 1000));
-
         using audio_buffer_type = stream_audio::encode_buffer_type;
-        using uuid_type         = noheap::buffer_bytes_type<uuid_size, std::uint8_t>;
-        using uuids_type        = std::array<uuid_type, max_count_contributers>;
 
     public:
         audio_buffer_type audio_buffer;
@@ -34,32 +37,23 @@ struct extention_data_type {
     };
 
 public:
-    static constexpr std::size_t payload_data_size = sizeof(payload_data_type);
-    static_assert(payload_data_size <= max_payload_data_size,
-                  "Payload size is too large.");
-
-public:
     payload_data_type payload;
 
-    noheap::buffer_bytes_type<max_payload_data_size - payload_data_size> padding;
+    noheap::buffer_bytes_type<max_payload_data_size - sizeof(payload_data_type)>
+        padding{};
 };
-
-using payload_size_ad_type           = std::size_t;
-static constexpr std::size_t ad_size = sizeof(payload_size_ad_type);
 
 template<ntn_relation relation_type>
 using noise_context_type          = noise_context<relation_type>;
-using payload_packet_type         = packet_native_type<extention_data_type, ad_size>;
+using payload_packet_type         = packet_native_type<extention_data_type, ad_type>;
 using noise_handshake_packet_type = packet_native_type<
-    noise_context_type<ntn_relation::PTU>::buffer_handshake_packet_type, ad_size>;
+    noise_context_type<ntn_relation::PTU>::buffer_handshake_packet_type, ad_type>;
 
 struct payload_protocol_type
     : public protocol_native_type<payload_packet_type,
                                   noheap::log_impl::create_owner("VOICE_PROTOCOL")> {
     using packet_type        = payload_protocol_type::packet_type;
     using noise_context_type = noise_context_type<ntn_relation::PTU>;
-    using jitter_buffer_type = noheap::jitter_buffer<packet_type, max_jitter_size>;
-    using uuid_type = packet_type::extention_data_type::payload_data_type::uuid_type;
 
 public:
     constexpr void
@@ -70,19 +64,17 @@ public:
             callback(pckt);
 
             pckt->payload.sequence_number = local_sequence_number++;
-            pckt->payload.payload_type =
-                packet_type::extention_data_type::payload_data_type::local_payload_value;
-            pckt->payload.uuids[0] = uuid;
-            pckt->payload.lost     = false;
+            pckt->payload.payload_type    = local_payload_value;
+            pckt->payload.uuids[0]        = uuid;
+            pckt->payload.lost            = false;
 
             cipher_state->input_buffer.set(
                 {reinterpret_cast<std::uint8_t *>(pckt.extention_data()),
                  pckt.extention_size()},
-                packet_type::extention_data_type::payload_data_size);
+                sizeof(pckt->payload));
             cipher_state->encrypt();
 
-            pckt.payload_ad = noheap::to_buffer<packet_type::ad_type>(
-                cipher_state->input_buffer.get().size);
+            pckt.payload_ad = cipher_state->input_buffer.get().size;
 
         } catch (noheap::runtime_error &excp) {
             excp.set_owner(buffer_owner);
@@ -96,8 +88,8 @@ public:
         try {
             cipher_state->output_buffer.set(
                 {reinterpret_cast<std::uint8_t *>(pckt.extention_data()),
-                 pckt.extention_size()},
-                noheap::represent_bytes<payload_size_ad_type>(pckt.payload_ad));
+                 pckt.payload_ad},
+                pckt.payload_ad);
 
             cipher_state->decrypt();
 
@@ -154,8 +146,8 @@ private:
     }
 
 private:
-    mutable jitter_buffer_type                buffer;
-    mutable noise_context_type::cipher_state *cipher_state;
+    mutable noheap::jitter_buffer<packet_type, max_jitter_size> buffer;
+    mutable noise_context_type::cipher_state                   *cipher_state;
 
     mutable bool filled = false;
 
@@ -185,8 +177,7 @@ public:
                 0);
             noise_ctx_p->set_handshake_message();
 
-            pckt.payload_ad = noheap::to_buffer<packet_type::ad_type>(
-                noise_ctx_p->get_handshake_buffer().get().size);
+            pckt.payload_ad = noise_ctx_p->get_handshake_buffer().get().size;
         } catch (noheap::runtime_error &excp) {
             excp.set_owner(buffer_owner);
             throw;
@@ -200,7 +191,7 @@ public:
                 std::span<std::uint8_t>(
                     reinterpret_cast<std::uint8_t *>(pckt.extention_data()),
                     pckt.extention_size()),
-                noheap::represent_bytes<payload_size_ad_type>(pckt.payload_ad));
+                pckt.payload_ad);
             noise_ctx_p->get_handshake_message();
         } catch (noheap::runtime_error &excp) {
             excp.set_owner(buffer_owner);

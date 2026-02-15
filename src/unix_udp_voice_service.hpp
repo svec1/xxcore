@@ -86,7 +86,7 @@ void unix_udp_voice_service::set_noise_handshake(
     noise_handshake_packet<relation_type>::get_protocol().set_noise_context(noise_ctx);
 
     noise_ctx.init(config.pattern, config.role);
-    // noise_ctx.set_prologue({});
+    noise_ctx.set_prologue({});
 
     auto noise_name_id       = noise_ctx.get_name_id();
     auto noise_prologue      = noise_ctx.get_prologue();
@@ -140,8 +140,7 @@ void unix_udp_voice_service::run() {
             {
                 stream_tcp_type tcp_stream(io, tcp_port);
 
-                if (config.role == noise_role::RESPONDER
-                    || !tcp_stream.wait_connect({addr, tcp_port})) {
+                if (!tcp_stream.wait_connect({addr, tcp_port})) {
                     tcp_stream.close();
 
                     acceptor_type ac(io, tcp_port);
@@ -159,8 +158,8 @@ void unix_udp_voice_service::run() {
                         .get_random_bytes<sizeof(
                             payload_packet{}->payload.sequence_number)>()
                         .data()));
-            payload_prt.set_uuid(ossl_ctx.get_random_bytes<
-                                 protocol::payload_protocol_type::uuid_type{}.size()>());
+            payload_prt.set_uuid(
+                ossl_ctx.get_random_bytes<protocol::uuid_type{}.size()>());
 
             log.to_all("Payload consumer is executing...");
             std::future<void> payload_consumer =

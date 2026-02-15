@@ -200,9 +200,9 @@ public:
         noise_buffer_view output_buffer{};
 
     private:
-        NoiseCipherState *send_cipher    = nullptr;
-        NoiseCipherState *receive_cipher = nullptr;
-        NoiseRandState   *randstate      = nullptr;
+        NoiseCipherState *encrypt_state = nullptr;
+        NoiseCipherState *decrypt_state = nullptr;
+        NoiseRandState   *randstate     = nullptr;
 
         bool completed_handshake = false;
     };
@@ -217,7 +217,7 @@ public:
     ~noise_context();
 
 public:
-    void init(noise_pattern pattern, noise_role role);
+    void init(noise_pattern pattern, noise_role _role);
     void dump();
 
     void start();
@@ -253,6 +253,7 @@ private:
     cipher_state cipher_st{};
 
     NoiseProtocolId   nid;
+    noise_role        role;
     noise_buffer_view handshake_buffer{};
 };
 template<ntn_relation _relation_type>
@@ -284,8 +285,8 @@ template<ntn_relation _relation_type>
 noise_context<_relation_type>::cipher_state &
     noise_context<_relation_type>::cipher_state::operator=(cipher_state &&handle) {
     this->randstate           = std::move(handle.randstate);
-    this->send_cipher         = std::move(handle.send_cipher);
-    this->receive_cipher      = std::move(handle.receive_cipher);
+    this->encrypt_state       = std::move(handle.encrypt_state);
+    this->decrypt_state       = std::move(handle.decrypt_state);
     this->completed_handshake = std::move(handle.completed_handshake);
 
     handle.completed_handshake = false;
@@ -300,16 +301,12 @@ void noise_context<_relation_type>::cipher_state::encrypt() {
     check_completed_handshake();
     std::size_t ret;
 
-    /*
     if ((ret = noise_randstate_pad(randstate, input_buffer->data, input_buffer->size,
-                                   input_buffer->max_size
-                                       - noise_cipherstate_get_mac_length(send_cipher),
-                                   NOISE_PADDING_RANDOM))
+                                   input_buffer->max_size, NOISE_PADDING_RANDOM))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to pad");
-    */
 
-    if ((ret = noise_cipherstate_encrypt(send_cipher, &*input_buffer))
+    if ((ret = noise_cipherstate_encrypt(encrypt_state, &*input_buffer))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to encrypt");
 }
@@ -317,7 +314,7 @@ template<ntn_relation _relation_type>
 void noise_context<_relation_type>::cipher_state::decrypt() {
     check_completed_handshake();
     std::size_t ret;
-    if ((ret = noise_cipherstate_decrypt(receive_cipher, &*output_buffer))
+    if ((ret = noise_cipherstate_decrypt(decrypt_state, &*output_buffer))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to decrypt");
 }
@@ -332,8 +329,8 @@ void noise_context<_relation_type>::cipher_state::dump() {
         return;
 
     noise_randstate_free(randstate);
-    noise_cipherstate_free(send_cipher);
-    noise_cipherstate_free(receive_cipher);
+    noise_cipherstate_free(encrypt_state);
+    noise_cipherstate_free(decrypt_state);
 }
 
 template<ntn_relation _relation_type>
@@ -347,7 +344,7 @@ noise_context<_relation_type>::~noise_context() {
     this->dump();
 }
 template<ntn_relation _relation_type>
-void noise_context<_relation_type>::init(noise_pattern pattern, noise_role role) {
+void noise_context<_relation_type>::init(noise_pattern pattern, noise_role _role) {
     nid              = {.prefix_id  = nid_static.prefix_id,
                         .pattern_id = static_cast<std::uint16_t>(pattern),
                         .dh_id      = nid_static.dh_id,
@@ -356,6 +353,7 @@ void noise_context<_relation_type>::init(noise_pattern pattern, noise_role role)
                         .hybrid_id  = nid_static.hybrid_id,
                         .reserved   = {}};
     prologue.pattern = nid.pattern_id;
+    role             = _role;
 
     std::size_t ret;
     if (ptu && !is_ptu(pattern) || !ptu && is_ptu(pattern))
@@ -390,10 +388,13 @@ void noise_context<_relation_type>::stop() {
         handle_error(0, "Failed to complete handshake");
 
     std::size_t ret;
-    if ((ret = noise_handshakestate_split(handshakestate, &cipher_st.send_cipher,
-                                          &cipher_st.receive_cipher))
+    if ((ret = noise_handshakestate_split(handshakestate, &cipher_st.encrypt_state,
+                                          &cipher_st.decrypt_state))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to split handshake");
+
+    if (role == noise_role::RESPONDER)
+        std::swap(cipher_st.encrypt_state, cipher_st.decrypt_state);
 
     if ((ret = noise_randstate_new(&cipher_st.randstate)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to init randstate");
