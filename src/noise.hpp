@@ -32,14 +32,14 @@ enum class noise_pattern : std::uint16_t {
     XX = NOISE_PATTERN_XX,
 };
 
-enum noise_role : std::uint16_t {
+enum class noise_role : std::uint16_t {
     UNKNOWN = 0,
 
     INITIATOR = NOISE_ROLE_INITIATOR,
     RESPONDER = NOISE_ROLE_RESPONDER,
 };
 
-enum noise_action : std::uint16_t {
+enum class noise_action : std::uint16_t {
     NONE          = NOISE_ACTION_NONE,
     WRITE_MESSAGE = NOISE_ACTION_WRITE_MESSAGE,
     READ_MESSAGE  = NOISE_ACTION_READ_MESSAGE,
@@ -48,7 +48,7 @@ enum noise_action : std::uint16_t {
     COMPLETE      = NOISE_ACTION_COMPLETE,
 };
 
-enum ntn_relation : std::uint8_t { PTU = 0, UTU };
+enum class ntn_relation : std::uint8_t { UNKNOWN = 0, PTU, UTU };
 
 bool is_ptu(noise_pattern pattern) {
     if (pattern == noise_pattern::NK || pattern == noise_pattern::NX
@@ -96,7 +96,7 @@ consteval std::size_t get_key_size() {
 static constexpr std::size_t max_size_key = get_key_size<NOISE_DH_CURVE448>();
 template<std::size_t size>
     requires(size <= max_size_key)
-using buffer_key_type = noheap::buffer_bytes_type<size, std::uint8_t>;
+using buffer_key_type = noheap::buffer_bytes_type<size, noheap::ubyte>;
 
 template<ntn_relation _relation_type>
 class noise_context {
@@ -131,7 +131,7 @@ public:
     using pre_shared_key_type     = buffer_key_type<pre_shared_key_size>;
     using dh_key_type             = buffer_key_type<dh_key_size>;
 
-    using name_id = noheap::buffer_bytes_type<max_buffer_name_id_size>;
+    using name_id = noheap::buffer_type<char, max_buffer_name_id_size>;
 
 private:
     struct {
@@ -167,7 +167,7 @@ public:
         constexpr NoiseBuffer &operator*() noexcept;
 
     public:
-        void               set(std::span<std::uint8_t> buffer, std::size_t payload_size);
+        void               set(std::span<noheap::ubyte> buffer, std::size_t payload_size);
         const NoiseBuffer &get() const;
 
     private:
@@ -228,7 +228,7 @@ public:
 
 public:
     name_id      get_name_id() const;
-    std::ssize_t get_action();
+    noise_action get_action();
 
     void set_handshake_message();
     void get_handshake_message();
@@ -267,8 +267,8 @@ constexpr NoiseBuffer &
 }
 
 template<ntn_relation _relation_type>
-void noise_context<_relation_type>::noise_buffer_view::set(std::span<std::uint8_t> buffer,
-                                                           std::size_t payload_size) {
+void noise_context<_relation_type>::noise_buffer_view::set(
+    std::span<noheap::ubyte> buffer, std::size_t payload_size) {
     noise_buffer_set_inout(this->buffer, buffer.data(), payload_size, buffer.size());
 }
 template<ntn_relation _relation_type>
@@ -360,7 +360,8 @@ void noise_context<_relation_type>::init(noise_pattern pattern, noise_role role)
         throw noheap::runtime_error(buffer_owner,
                                     "Relation type doesn't follow the pattern.");
 
-    if ((ret = noise_handshakestate_new_by_id(&handshakestate, &nid, role))
+    if ((ret = noise_handshakestate_new_by_id(&handshakestate, &nid,
+                                              static_cast<std::uint16_t>(role)))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to get new state of handshake.");
 }
@@ -417,8 +418,8 @@ noise_context<_relation_type>::name_id
     return buffer_tmp;
 }
 template<ntn_relation _relation_type>
-std::ssize_t noise_context<_relation_type>::get_action() {
-    return noise_handshakestate_get_action(handshakestate);
+noise_action noise_context<_relation_type>::get_action() {
+    return noise_action(noise_handshakestate_get_action(handshakestate));
 }
 
 template<ntn_relation _relation_type>
@@ -511,7 +512,7 @@ template<ntn_relation _relation_type>
 void noise_context<_relation_type>::handle_error(std::size_t      error,
                                                  std::string_view extention_error) {
     if (error) {
-        noheap::buffer_bytes_type<64> buffer_noise_error{};
+        noheap::buffer_type<char, 64> buffer_noise_error{};
         noise_strerror(error, buffer_noise_error.data(), buffer_noise_error.size());
         throw noheap::runtime_error(buffer_owner, "{}: {}.", extention_error,
                                     buffer_noise_error.data());

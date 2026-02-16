@@ -16,6 +16,7 @@
 #include <memory_resource>
 #include <mutex>
 #include <queue>
+#include <random>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -34,14 +35,23 @@ namespace noheap {
 
 static constexpr std::size_t output_buffer_size = 1024;
 
-template<std::size_t buffer_size, typename T = char>
-    requires std::is_integral<T>::value
+using byte  = std::int_least8_t;
+using ubyte = std::uint_least8_t;
+using rbyte = std::byte;
+
+template<typename T>
+concept Byte =
+    (std::same_as<T, byte> || std::same_as<T, ubyte> || std::same_as<T, rbyte>);
+
+template<typename T, std::size_t buffer_size>
+using buffer_type = std::array<T, buffer_size>;
+template<std::size_t buffer_size, Byte T = byte>
 using buffer_bytes_type = std::array<T, buffer_size>;
 
 template<typename T>
-concept Buffer_bytes_type =
-    std::same_as<std::decay_t<T>,
-                 buffer_bytes_type<T{}.size(), typename std::decay_t<T>::value_type>>;
+concept Buffer_bytes = std::same_as<
+    std::decay_t<T>,
+    buffer_bytes_type<std::decay_t<T>{}.size(), typename std::decay_t<T>::value_type>>;
 
 template<typename T>
 concept Buffer =
@@ -53,8 +63,8 @@ template<Buffer TReturn, typename TSource>
 constexpr TReturn to_buffer(TSource el) {
     TReturn buffer_tmp{};
 
-    auto begin = reinterpret_cast<std::int8_t *>(&el);
-    auto end   = reinterpret_cast<std::int8_t *>(&el) + sizeof(TSource);
+    auto begin = reinterpret_cast<byte *>(&el);
+    auto end   = reinterpret_cast<byte *>(&el) + sizeof(TSource);
 
     std::copy(begin, end, buffer_tmp.begin());
 
@@ -76,9 +86,9 @@ constexpr TReturn to_new_buffer(TSource &&buffer) {
     return buffer_tmp;
 }
 
-template<Buffer TReturn, Buffer TSource>
-constexpr TReturn to_hex_string(TSource &&buffer) {
-    TReturn buffer_tmp{};
+template<Buffer_bytes TSource>
+constexpr auto to_hex_string(TSource &&buffer) {
+    buffer_type<char, buffer.size() * 2> buffer_tmp{};
 
     auto it = buffer_tmp.begin();
 
@@ -93,6 +103,35 @@ template<typename TReturn, Buffer TSource>
              && std::decay_t<TSource>{}.size() == sizeof(TReturn))
 constexpr TReturn represent_bytes(TSource &&buffer) {
     return *reinterpret_cast<TReturn *>(buffer.data());
+}
+
+template<Buffer TReturn>
+TReturn get_random_bytes() {
+    TReturn buffer_tmp;
+
+    std::random_device rd;
+    std::mt19937       gen(rd());
+
+    std::uniform_int_distribution<typename TReturn::value_type> distrib(
+        std::numeric_limits<typename TReturn::value_type>::min(),
+        std::numeric_limits<typename TReturn::value_type>::max());
+
+    for (auto &it : buffer_tmp)
+        it = distrib(rd);
+
+    return buffer_tmp;
+}
+
+template<typename T>
+bool is_equal_bytes(std::span<T> b1, std::span<T> b2) {
+    if (b1.size() != b2.size())
+        return false;
+
+    std::size_t mismatch = 0;
+    for (std::size_t i = 0; i < b1.size(); ++i)
+        mismatch |= static_cast<unsigned char>(b1[i] ^ b2[i]);
+
+    return !mismatch;
 }
 
 class print_impl final {
@@ -129,7 +168,7 @@ class log_impl final {
 public:
     struct owner_impl final {
         static constexpr std::size_t buffer_size = 24;
-        using buffer_type                        = buffer_bytes_type<buffer_size>;
+        using buffer_type                        = buffer_type<char, buffer_size>;
     };
 
     static consteval owner_impl::buffer_type create_owner(std::string_view owner) {
@@ -167,7 +206,7 @@ public:
 class runtime_error final : public std::exception {
 public:
     static constexpr std::size_t buffer_size = output_buffer_size;
-    using buffer_type                        = buffer_bytes_type<buffer_size>;
+    using buffer_type                        = buffer_type<char, buffer_size>;
 
 public:
     template<typename... Args>

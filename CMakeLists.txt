@@ -22,7 +22,7 @@ set(NOISE_C_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/noise-c)
 set(OPUS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/opus)
 
 file(GLOB_RECURSE NOISE_C_SOURCE_FILES ${NOISE_C_DIR}/src/*)
-set(NOISE_C_INCLUDE_DIR ${NOISE_C_DIR}/include)
+set(NOISE_C_INCLUDE_DIR ${NOISE_C_DIR}/include ${NOISE_C_DIR}/src/crypto)
 set(
     NOISE_C_LIBS
     ${NOISE_C_DIR}/src/protocol/libnoiseprotocol.a

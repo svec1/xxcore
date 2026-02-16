@@ -32,6 +32,8 @@ concept Derived_from_protocol_native_t =
 
 template<Packet_native_t TPacket>
 struct action;
+template<Packet_native_t TPacket>
+struct decoy_action;
 template<typename T>
 concept Derived_from_action = std::derived_from<T, action<typename T::packet_type>>;
 
@@ -40,7 +42,7 @@ struct packet_native_type {
 public:
     using extention_data_type = T;
     using ad_type             = TAd;
-    using represent_type      = std::byte;
+    using represent_type      = noheap::rbyte;
 
 public:
     packet_native_type() = default;
@@ -96,6 +98,15 @@ public:
 public:
     constexpr virtual void init_packet(packet_type &pckt)     = 0;
     constexpr virtual void process_packet(packet_type &&pckt) = 0;
+};
+
+template<Packet_native_t TPacket>
+struct decoy_action : public action<TPacket> {
+    using packet_type = decoy_action::packet_type;
+
+public:
+    constexpr void init_packet(packet_type &pckt) override {}
+    constexpr void process_packet(packet_type &&pckt) override {}
 };
 
 template<Packet_native_t T, noheap::log_impl::owner_impl::buffer_type _buffer_owner>
@@ -240,6 +251,11 @@ protected:
     net_stream_basic(asio::io_context &_io);
     net_stream_basic(asio::io_context &_io, asio::ip::port_type _port);
 
+    template<typename TOther>
+    net_stream_basic(TOther &&stream);
+    template<typename TOther>
+    net_stream_basic &operator=(TOther &&stream);
+
 protected:
     static void init_socket(net_stream_basic<TSocket, Action, v> &stream,
                             asio::ip::port_type                   port);
@@ -299,6 +315,22 @@ net_stream_basic<TSocket, Action, v>::net_stream_basic(asio::io_context   &_io,
     : io(_io), port(_port), running(true), socket(io) {
     init_socket(*this, port);
 }
+
+template<Socket TSocket, Derived_from_action Action, ipv v>
+template<typename TOther>
+net_stream_basic<TSocket, Action, v>::net_stream_basic(TOther &&stream)
+    : io(stream.io), port(stream.port), running(stream.running), socket(stream.socket) {
+}
+
+template<Socket TSocket, Derived_from_action Action, ipv v>
+template<typename TOther>
+net_stream_basic<TSocket, Action, v> &
+    net_stream_basic<TSocket, Action, v>::operator=(TOther &&stream) {
+    port    = std::move(port);
+    running = std::move(running);
+    socket  = std::move(socket);
+}
+
 template<Socket TSocket, Derived_from_action Action, ipv v>
 void net_stream_basic<TSocket, Action, v>::init_socket(
     net_stream_basic<TSocket, Action, v> &stream, asio::ip::port_type port) {
