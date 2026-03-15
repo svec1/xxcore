@@ -1,5 +1,5 @@
-#ifndef SUDIO_HPP
-#define SUDIO_HPP
+#ifndef SNDIO_HPP
+#define SNDIO_HPP
 
 #include <sndio.h>
 #include <sys/poll.h>
@@ -21,7 +21,7 @@ private:
 
 private:
     sio_hdl *handle;
-    sio_par params;
+    sio_par  params;
 };
 
 template<audio_config _cfg>

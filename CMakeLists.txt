@@ -16,7 +16,6 @@ set(OPUS_VAR_ARRAYS ON)
 set(OPUS_NONTHREADSAFE_PSEUDOSTACK OFF)
 set(OPUS_USE_ALLOCA OFF)
 add_subdirectory(thirdparty/opus)	
-find_package(OpenSSL)	
 
 set(NOISE_C_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/noise-c)
 set(OPUS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/opus)
@@ -54,21 +53,19 @@ add_custom_target(
 )
 add_dependencies(${UUV} noise-c)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O1 -pthread")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
 
 target_include_directories(
     ${UUV}
     PUBLIC 
     src/
     ${LIBBOOST_PATH}
-    ${OpenSSL_INCLUDE_DIRS}
     ${OPUS_DIR}/include
 	${NOISE_C_INCLUDE_DIR}
 )
 target_link_libraries(
     ${UUV}
     PRIVATE
-    OpenSSL::Crypto
     Opus::opus
     ${NOISE_C_LIBS}
 )

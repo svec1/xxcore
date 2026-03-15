@@ -3,19 +3,19 @@
 #include "unix_udp_voice_service.hpp"
 
 using namespace boost;
-using dba         = stream_audio::default_base_audio;
-using uuv_service = unix_udp_voice_service;
+using dba = stream_audio::default_base_audio;
 
 static constexpr log_handler log_main{{}};
 static constexpr auto        name_config_file = "uuv_config.json";
 
-struct vcu_config {
-    std::string_view          device;
-    asio::ip::port_type       port;
-    uuv_service::address_type addr;
+struct xxcore_config {
+    std::string_view             device;
+    asio::ip::port_type          port;
+    xxcore_service::address_type addr;
 };
 
-static void parse_options(vcu_config &cfg, int argc, char *argv[]) {
+// Parses cmd options
+static void parse_options(xxcore_config &cfg, int argc, char *argv[]) {
     static constexpr auto throw_usage = [](auto arg, int expected_argument = 0) {
         using re = noheap::runtime_error;
 
@@ -84,8 +84,9 @@ static void parse_options(vcu_config &cfg, int argc, char *argv[]) {
     }
 }
 
-uuv_service::buffer_config_type read_config() {
-    uuv_service::buffer_config_type buffer_tmp;
+// Reads json file
+xxcore_service::buffer_config_type read_config() {
+    xxcore_service::buffer_config_type buffer_tmp;
 
     std::ifstream config(name_config_file);
     if (!config.is_open())
@@ -102,7 +103,7 @@ uuv_service::buffer_config_type read_config() {
     return buffer_tmp;
 }
 
-void print_cfg(const vcu_config &cfg) {
+void print_cfg(const xxcore_config &cfg) {
     using ca_type = stream_audio::ca_type;
 
     log_main.to_console(" -- Sound architecture: {}", dba::arsnd_name);
@@ -119,16 +120,16 @@ void print_cfg(const vcu_config &cfg) {
 
 int main(int argc, char *argv[]) {
     try {
-        vcu_config cfg = {.device = dba::default_device_playback, .port = 8888};
+        xxcore_config cfg = {.device = dba::default_device_playback, .port = 8888};
         parse_options(cfg, argc, argv);
         print_cfg(cfg);
 
         dba::device_playback = cfg.device;
         dba::device_capture  = cfg.device;
 
-        uuv_service vsc(std::move(cfg.addr), cfg.port);
-        vsc.configurate(read_config());
-        vsc.run();
+        xxcore_service service(std::move(cfg.addr), cfg.port);
+        service.configurate(read_config());
+        service.run();
 
     } catch (noheap::runtime_error &excp) {
         log_main.exception_to_all(excp);

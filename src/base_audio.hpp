@@ -33,7 +33,7 @@ static constexpr std::string_view stream_audio_mode_to_string(stream_audio_mode 
 }
 
 struct audio_config {
-    using byte_type = std::int8_t;
+    using byte_type = noheap::byte;
 
 public:
     std::size_t bitrate;

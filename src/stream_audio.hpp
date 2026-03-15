@@ -6,8 +6,8 @@
 
 class stream_audio {
 public:
-    using default_base_audio = audio<{.bitrate         = 120'000,
-                                      .latency         = 10,
+    using default_base_audio = audio<{.bitrate         = 96'000,
+                                      .latency         = 20,
                                       .channels        = 2,
                                       .sample_rate     = 48000,
                                       .bits_per_sample = 16}>;

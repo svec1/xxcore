@@ -19,6 +19,7 @@
 #include <random>
 #include <span>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace std {
@@ -63,10 +64,10 @@ template<Buffer TReturn, typename TSource>
 constexpr TReturn to_buffer(TSource el) {
     TReturn buffer_tmp{};
 
-    auto begin = reinterpret_cast<byte *>(&el);
-    auto end   = reinterpret_cast<byte *>(&el) + sizeof(TSource);
+    auto begin = reinterpret_cast<rbyte *>(&el);
+    auto end   = reinterpret_cast<rbyte *>(&el) + sizeof(TSource);
 
-    std::copy(begin, end, buffer_tmp.begin());
+    std::copy(begin, end, reinterpret_cast<rbyte *>(buffer_tmp.data()));
 
     return buffer_tmp;
 }
@@ -87,8 +88,9 @@ constexpr TReturn to_new_buffer(TSource &&buffer) {
 }
 
 template<Buffer_bytes TSource>
-constexpr auto to_hex_string(TSource &&buffer) {
-    buffer_type<char, buffer.size() * 2> buffer_tmp{};
+constexpr buffer_type<char, std::decay_t<TSource &>().size() * 2>
+    to_hex_string(TSource &&buffer) {
+    decltype(to_hex_string(buffer)) buffer_tmp{};
 
     auto it = buffer_tmp.begin();
 
@@ -132,6 +134,12 @@ bool is_equal_bytes(std::span<T> b1, std::span<T> b2) {
         mismatch |= static_cast<unsigned char>(b1[i] ^ b2[i]);
 
     return !mismatch;
+}
+
+template<typename T>
+    requires std::numeric_limits<T>::is_integer
+T get_bits(T num, ubyte start, ubyte len) {
+    return num & T(((1u << len) - 1) << start);
 }
 
 class print_impl final {
@@ -269,7 +277,7 @@ protected:
 template<std::size_t _buffer_size>
 struct pseudoheap_monotonic_array {
 private:
-    using basic_array_type = basic_array<int8_t, _buffer_size>;
+    using basic_array_type = basic_array<rbyte, _buffer_size>;
 
 public:
     pseudoheap_monotonic_array() = default;
@@ -281,14 +289,13 @@ public:
         if (offset + area_size >= basic_array_type::buffer_size)
             throw runtime_error("Pseudoheap is full. Last request: {}", area_size);
 
-        typename basic_array_type::value_type *ptr =
-            this->basic_array.buffer.data() + offset;
+        typename basic_array_type::value_type *ptr = this->array.buffer.data() + offset;
         offset += area_size;
         return reinterpret_cast<T>(ptr);
     }
 
 private:
-    basic_array_type basic_array;
+    basic_array_type array;
     std::size_t      offset = 0;
 };
 template<typename T, std::size_t _buffer_size>
@@ -304,37 +311,35 @@ public:
 template<typename T, std::size_t _buffer_size>
 class monotonic_array : public basic_array<T, _buffer_size> {
 public:
+    using iterator       = monotonic_array::buffer_type::iterator;
+    using const_iterator = monotonic_array::buffer_type::const_iterator;
+
+public:
     constexpr monotonic_array() = default;
-    monotonic_array(monotonic_array &&array) {
+    monotonic_array(const monotonic_array &array) { this->operator=(array); }
+    monotonic_array(monotonic_array &&array) { this->operator=(std::move(array)); }
+    monotonic_array &operator=(const monotonic_array &array) {
+        std::copy(array.begin(), array.end(), this->buffer.begin());
+        count_pushed = array.count_pushed;
+        return *this;
+    }
+    monotonic_array &operator=(monotonic_array &&array) {
         std::swap(this->buffer, array.buffer);
         count_pushed = array.count_pushed;
+        return *this;
     }
 
 public:
-    std::size_t                            size() const { return count_pushed; }
-    monotonic_array::buffer_type::iterator begin() { return this->buffer.begin(); }
-    monotonic_array::buffer_type::iterator end() {
-        return this->buffer.begin() + count_pushed;
-    }
-    monotonic_array::buffer_type::iterator       bend() { return this->buffer.end(); }
-    monotonic_array::buffer_type::const_iterator begin() const {
-        return this->buffer.cbegin();
-    }
-    monotonic_array::buffer_type::const_iterator end() const {
-        return this->buffer.cbegin() + count_pushed;
-    }
-    monotonic_array::buffer_type::const_iterator bend() const {
-        return this->buffer.end();
-    }
-    monotonic_array::buffer_type::const_iterator cbegin() const {
-        return this->buffer.begin();
-    }
-    monotonic_array::buffer_type::const_iterator cend() const {
-        return this->buffer.begin() + count_pushed;
-    }
-    monotonic_array::buffer_type::const_iterator cbend() const {
-        return this->buffer.end();
-    }
+    std::size_t    size() const { return count_pushed; }
+    iterator       begin() { return this->buffer.begin(); }
+    iterator       end() { return this->buffer.begin() + count_pushed; }
+    iterator       bend() { return this->buffer.end(); }
+    const_iterator begin() const { return this->buffer.cbegin(); }
+    const_iterator end() const { return this->buffer.cbegin() + count_pushed; }
+    const_iterator bend() const { return this->buffer.end(); }
+    const_iterator cbegin() const { return this->buffer.begin(); }
+    const_iterator cend() const { return this->buffer.begin() + count_pushed; }
+    const_iterator cbend() const { return this->buffer.end(); }
 
 public:
     template<typename _T>
@@ -346,10 +351,10 @@ public:
     }
     template<typename... Args>
         requires std::constructible_from<std::decay_t<T>, Args...>
-    void emplace(monotonic_array::buffer_type::iterator it, Args &&...args) {
+    void emplace(iterator it, Args &&...args) {
         if (count_pushed == monotonic_array::buffer_size)
             throw runtime_error("Buffer overflow.");
-        else if (it == this->buffer.end())
+        else if (it >= this->buffer.end())
             throw runtime_error("Invalid access.");
 
         for (auto it_tmp = this->end(); it_tmp >= it; --it_tmp)
@@ -357,6 +362,19 @@ public:
 
         *it = T{std::forward<Args>(args)...};
         ++count_pushed;
+    }
+    iterator erase(iterator it) {
+        if (count_pushed == monotonic_array::buffer_size)
+            throw runtime_error("Buffer overflow.");
+        else if (it >= this->buffer.end())
+            throw runtime_error("Invalid access.");
+
+        for (auto it_tmp = it; it_tmp < this->end(); ++it_tmp)
+            std::swap(*it_tmp, *(it_tmp + 1));
+
+        --count_pushed;
+
+        return this->end() + 1;
     }
     T pop_front() {
         if (count_pushed == 0)
@@ -428,9 +446,9 @@ private:
     std::size_t back = 0, front = 0, count_pushed = 0;
 };
 
-template<typename T, std::size_t _buffer_size>
+template<typename T, typename TSequence_number_type, std::size_t _buffer_size>
 class jitter_buffer
-    : private monotonic_array<std::tuple<T, std::uint16_t, bool>, _buffer_size> {
+    : private monotonic_array<std::tuple<T, TSequence_number_type, bool>, _buffer_size> {
 public:
     using value_type = jitter_buffer::value_type;
 
