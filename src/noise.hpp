@@ -279,7 +279,7 @@ public:
     void set_pre_shared_key(const pre_shared_key_type &key);
 
 public:
-    static keypair_type generate_local_keypair();
+    static keypair_type generate_keypair();
 
 private:
     static void handle_error(std::size_t error, std::string_view extention_error);
@@ -662,7 +662,7 @@ void noise_context<_ecdh>::set_local_keypair(const keypair_type &kp) {
         handle_error(ret, "Failed to set local keypair.");
 }
 template<ecdh_type _ecdh>
-noise_context<_ecdh>::keypair_type noise_context<_ecdh>::generate_local_keypair() {
+noise_context<_ecdh>::keypair_type noise_context<_ecdh>::generate_keypair() {
     keypair_type         kp;
     noise_context<_ecdh> context_tmp;
 

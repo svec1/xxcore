@@ -145,7 +145,6 @@ public:
         node_info_type(const node_info_type &node_info) { this->operator=(node_info); }
         node_info_type &operator=(const node_info_type &node_info) {
             last_acceptance_time.store(node_info.last_acceptance_time);
-            last_packet_accepted.store(node_info.last_packet_accepted);
             status           = node_info.status;
             sender_ack       = node_info.sender_ack;
             receiver_ack     = node_info.receiver_ack;
@@ -155,7 +154,6 @@ public:
 
     public:
         std::atomic<std::size_t> last_acceptance_time;
-        std::atomic<bool>        last_packet_accepted;
 
         status_type                        status;
         std::uint16_t                      packet_number;
@@ -304,7 +302,6 @@ public:
             auto &node_info =
                 const_cast<decltype(node_info_it->second) &>(node_info_it->second);
             node_info.last_acceptance_time.store(get_now_ms());
-            node_info.last_packet_accepted.store(true);
 
             std::size_t payload_packet_it = 0;
             for (; payload_packet_it < pckt->packets.size(); ++payload_packet_it) {
@@ -408,24 +405,8 @@ public:
         if (node_info_it == node_info_s.end())
             throw noheap::runtime_error(this->buffer_owner, "Not found node.");
 
-        bool last_packet_accepted = node_info_it->second.last_packet_accepted.load();
-        if (last_packet_accepted)
-            node_info_it->second.last_packet_accepted.store(false);
-
         return get_now_ms() - node_info_it->second.last_acceptance_time.load()
-                   >= termination_timeout_ms
-               && !last_packet_accepted;
-    }
-    bool was_accepted(const network::buffer_address_type &addr) const {
-        auto node_info_it = get_node_info_it(addr);
-        if (node_info_it == node_info_s.end())
-            throw noheap::runtime_error(this->buffer_owner, "Not found node.");
-
-        bool last_packet_accepted = node_info_it->second.last_packet_accepted.load();
-        if (last_packet_accepted)
-            node_info_it->second.last_packet_accepted.store(false);
-
-        return last_packet_accepted;
+               >= termination_timeout_ms;
     }
 
 private:
@@ -610,14 +591,14 @@ public:
         noise_ctx.init(pattern, role);
         noise_ctx.set_prologue(std::move(ext));
 
-        noise_ctx.set_local_keypair(std::move(local_keypair));
+        noise_ctx.set_local_keypair(noise_ctx.generate_keypair());
         noise_ctx.set_remote_public_key(std::move(remote_public_key));
         if (pre_shared_key.has_value())
             noise_ctx.set_pre_shared_key(std::move(*pre_shared_key));
 
-        gen_ephemeral_obfs_key(pattern, role, local_keypair.pub, remote_public_key,
-                               pre_shared_key, ephemeral_obfs_key,
-                               ephemeral_header_obfs_key);
+        generate_ephemeral_obfs_key(pattern, role, local_keypair.pub, remote_public_key,
+                                    pre_shared_key, ephemeral_obfs_key,
+                                    ephemeral_header_obfs_key);
 
         noise_ctx.start();
 
@@ -648,7 +629,7 @@ private:
         else
             throw noheap::runtime_error("Handshake already completed.");
     }
-    static void gen_ephemeral_obfs_key(
+    static void generate_ephemeral_obfs_key(
         noise::noise_pattern pattern, noise::noise_role role,
         noise_context_type::dh_key_type                                &local_public_key,
         noise_context_type::dh_key_type                                &remote_public_key,

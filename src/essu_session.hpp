@@ -77,21 +77,23 @@ void essu_session<v, TPacket, Action>::establish_connection(
     while (true) {
         auto action = noise_context.get_action();
         if (action == noise::noise_action::WRITE_MESSAGE)
-            noise_udp_stream.template async_send_to<decltype(pckt)>(pckt, addr);
+            noise_udp_stream.template send_to<decltype(pckt)>(pckt, addr);
         else if (action == noise::noise_action::READ_MESSAGE) {
-            noise_udp_stream.template async_receive_from<decltype(pckt)>(pckt);
+            future_wrapper f([&]() {
+                noise_udp_stream.template async_receive_from<decltype(pckt)>(pckt);
+                noise_udp_stream.io_context_run();
+            });
 
             // Waits to receive packet
-            while (!protocol.was_accepted(buffer_addr)) {
-                std::this_thread::sleep_for(
-                    std::chrono::milliseconds(essu::min_waiting_ms));
-                if (protocol.check_timeout(buffer_addr)) {
-                    auto buffer_tmp = noheap::to_hex_string(buffer_addr);
-                    throw noheap::runtime_error(
-                        "Failed to establish connection: {}",
-                        std::string_view(buffer_tmp.data(), buffer_tmp.size()));
-                }
+            if (!f.is_completed(essu::termination_timeout_ms)) {
+                auto buffer_tmp = noheap::to_hex_string(buffer_addr);
+                throw noheap::runtime_error(
+                    "Timeout has been reached: {}",
+                    std::string_view(buffer_tmp.data(), buffer_tmp.size()));
             }
+
+            f.get();
+
         } else
             break;
     }

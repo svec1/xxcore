@@ -267,14 +267,19 @@ public:
         requires std::same_as<typename Action::packet_type, typename TPacket::packet_type>
     void async_receive_from(TPacket &pckt);
 
+    template<Packet TPacket>
+        requires std::same_as<typename Action::packet_type, typename TPacket::packet_type>
+    void send_to(TPacket &pckt, address_type addr);
+    template<Packet TPacket>
+        requires std::same_as<typename Action::packet_type, typename TPacket::packet_type>
+    void receive_from(TPacket &pckt);
+
 protected:
     template<async_socket_operation async_op, std::size_t delay, typename Func,
              typename TBuffer>
     void register_async_socket_operation(Func &&func, TBuffer &&buffer,
                                          endpoint_type &endpoint);
 
-    void send_to(asio::const_buffer buffer, const endpoint_type &endpoint);
-    void receive_from(asio::mutable_buffer buffer, endpoint_type &endpoint);
     void connect(const endpoint_type &endpoint, system::error_code &ec);
 
 protected:
@@ -383,9 +388,9 @@ void net_stream_basic<Action, v>::register_async_socket_operation(
 
     if constexpr (async_op == async_socket_operation::send_to)
         socket.async_send_to(std::forward<TBuffer>(buffer), endpoint, handler);
-    else if constexpr (async_op == async_socket_operation::receive_from)
+    else if constexpr (async_op == async_socket_operation::receive_from) {
         socket.async_receive_from(std::forward<TBuffer>(buffer), endpoint, handler);
-    else if constexpr (async_op == async_socket_operation::connect)
+    } else if constexpr (async_op == async_socket_operation::connect)
         socket.async_connect(endpoint, handler);
     else if constexpr (async_op == async_socket_operation::timer) {
         thread_local asio::steady_timer t(this->io);
@@ -396,32 +401,39 @@ void net_stream_basic<Action, v>::register_async_socket_operation(
         static_assert(false, "Unknown async operation.");
 }
 template<Derived_from_action Action, ipv v>
-void net_stream_basic<Action, v>::send_to(asio::const_buffer   buffer,
-                                          const endpoint_type &endpoint) {
+template<Packet TPacket>
+    requires std::same_as<typename Action::packet_type, typename TPacket::packet_type>
+void net_stream_basic<Action, v>::send_to(TPacket &pckt, address_type addr) {
     if (!running)
         return;
 
     system::error_code ec;
-    if constexpr (std::same_as<basic_socket_type, asio::ip::udp>)
-        socket.send_to(buffer, endpoint, 0, ec);
-    else
-        socket.send(buffer, 0, ec);
+
+    TPacket::prepare(pckt, this->get_address_bytes(addr),
+                     std::bind(&Action::init_packet, &this->act, std::placeholders::_1));
+    socket.send_to(asio::const_buffer(pckt.data(), pckt.size()), {addr, this->port}, 0,
+                   ec);
 
     this->handle_error(ec);
 }
 template<Derived_from_action Action, ipv v>
-void net_stream_basic<Action, v>::receive_from(asio::mutable_buffer buffer,
-                                               endpoint_type       &endpoint) {
+template<Packet TPacket>
+    requires std::same_as<typename Action::packet_type, typename TPacket::packet_type>
+void net_stream_basic<Action, v>::receive_from(TPacket &pckt) {
     if (!running)
         return;
 
-    system::error_code ec;
-    if constexpr (std::same_as<basic_socket_type, asio::ip::udp>)
-        socket.receive_from(buffer, endpoint, 0, ec);
-    else
-        socket.receive(buffer, 0, ec);
+    system::error_code      ec;
+    asio::ip::udp::endpoint sender_endpoint;
+
+    socket.receive_from(asio::mutable_buffer(pckt.data(), pckt.size()), sender_endpoint,
+                        0, ec);
 
     this->handle_error(ec);
+
+    TPacket::handle(
+        std::move(pckt), this->get_address_bytes(sender_endpoint.address()),
+        std::bind(&Action::process_packet, &this->act, std::placeholders::_1));
 }
 
 template<Derived_from_action Action, ipv v>
@@ -522,14 +534,10 @@ template<std::size_t delay, Packet TPacket>
     requires std::same_as<typename Action::packet_type, typename TPacket::packet_type>
 void net_stream_udp<Action, v>::register_send_handler(TPacket            &pckt,
                                                       const address_type &addr) {
-    thread_local asio::ip::udp::endpoint receiver_endpoint;
+    static asio::ip::udp::endpoint receiver_endpoint;
 
-    receiver_endpoint               = {addr, this->port};
     thread_local const auto do_send = [this, &pckt, &addr]() {
-        TPacket::prepare(
-            pckt, this->get_address_bytes(receiver_endpoint.address()),
-            std::bind(&Action::init_packet, &this->act, std::placeholders::_1));
-        this->send_to(asio::buffer(pckt.data(), pckt.size()), receiver_endpoint);
+        this->template send_to<TPacket>(pckt, addr);
         this->register_send_handler<delay>(pckt, addr);
     };
 

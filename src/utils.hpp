@@ -638,4 +638,40 @@ private:
     noheap::log_impl::owner_impl::buffer_type    buffer_owner;
 };
 
+struct future_wrapper {
+    future_wrapper() = default;
+
+    template<typename Func>
+    future_wrapper(Func &&func) {
+        perform(std::forward<Func>(func));
+    }
+
+public:
+    template<typename Func>
+    void perform(Func &&func) {
+        future_object = std::async(std::launch::async, std::forward<Func>(func));
+    }
+    void get() { future_object.get(); }
+    bool valid() { return future_object.valid(); }
+
+public:
+    bool is_completed(std::size_t timeout_ms) {
+        switch (std::future_status status =
+                    future_object.wait_for(std::chrono::milliseconds(timeout_ms));
+                status) {
+            case std::future_status::ready:
+                return true;
+            case std::future_status::timeout:
+                return false;
+
+            case std::future_status::deferred:
+            default:
+                throw noheap::runtime_error("Invalid status of future object.");
+        }
+    }
+
+private:
+    std::future<void> future_object;
+};
+
 #endif
