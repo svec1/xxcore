@@ -42,8 +42,7 @@ public:
     void run_stream_session();
 
 private:
-    asio::io_context io;
-    address_type     addr;
+    address_type addr;
 
     network::net_stream_udp<Action, v> udp_stream;
     noise_context_type::cipher_state   payload_cipher_state;
@@ -51,7 +50,7 @@ private:
 
 template<network::ipv v, network::Packet TPacket, network::Derived_from_action Action>
 essu_session<v, TPacket, Action>::essu_session(address_type _addr, port_type port)
-    : addr(_addr), udp_stream(io, port) {
+    : addr(_addr), udp_stream(port) {
 }
 template<network::ipv v, network::Packet TPacket, network::Derived_from_action Action>
 void essu_session<v, TPacket, Action>::establish_connection(
@@ -61,7 +60,7 @@ void essu_session<v, TPacket, Action>::establish_connection(
     noise_context_type::dh_key_type                               &&remote_public_key,
     std::optional<typename noise_context_type::pre_shared_key_type> pre_shared_key) {
     network::net_stream_udp<noise_handshake_action, v> noise_udp_stream(
-        io, udp_stream.get_port());
+        udp_stream.get_port());
     noise_packet_type pckt{};
 
     auto &noise_context = noise_udp_stream.get_action();
@@ -69,8 +68,7 @@ void essu_session<v, TPacket, Action>::establish_connection(
                        std::move(remote_public_key), pre_shared_key);
 
     const auto &protocol = pckt.get_protocol();
-    protocol.set_obfs_states(payload_cipher_state, noise_context.get_header_obfs_key(),
-                             0);
+    protocol.set_obfs_states(payload_cipher_state, noise_context.get_header_obfs_key());
 
     auto buffer_addr = noise_udp_stream.get_address_bytes(addr);
 
@@ -86,6 +84,12 @@ void essu_session<v, TPacket, Action>::establish_connection(
 
             // Waits to receive packet
             if (!f.is_completed(essu::termination_timeout_ms)) {
+                try {
+                    noise_udp_stream.socket_cancel();
+                    f.get();
+                } catch (noheap::runtime_error &) {
+                }
+
                 auto buffer_tmp = noheap::to_hex_string(buffer_addr);
                 throw noheap::runtime_error(
                     "Timeout has been reached: {}",
@@ -105,9 +109,6 @@ template<network::ipv v, network::Packet TPacket, network::Derived_from_action A
 void essu_session<v, TPacket, Action>::run_stream_session() {
     std::future<void> payload_handler = std::async(std::launch::async, [&] {
         packet_type pckt_for_receiving{}, pckt_for_sending{};
-
-        udp_stream.template register_send_handler<0>(pckt_for_sending, addr);
-        udp_stream.register_receive_handler(pckt_for_receiving);
 
         udp_stream.io_context_run();
     });

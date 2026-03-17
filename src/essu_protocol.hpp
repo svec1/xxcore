@@ -7,8 +7,7 @@
 #include "utils.hpp"
 
 namespace essu {
-static constexpr std::size_t termination_timeout_ms = 2500;
-static constexpr std::size_t min_waiting_ms         = 100;
+static constexpr std::size_t termination_timeout_ms = 3000;
 
 static constexpr std::size_t packet_size                     = 340;
 static constexpr std::size_t batch_packets_count             = 4;
@@ -144,7 +143,6 @@ public:
         node_info_type() = default;
         node_info_type(const node_info_type &node_info) { this->operator=(node_info); }
         node_info_type &operator=(const node_info_type &node_info) {
-            last_acceptance_time.store(node_info.last_acceptance_time);
             status           = node_info.status;
             sender_ack       = node_info.sender_ack;
             receiver_ack     = node_info.receiver_ack;
@@ -153,8 +151,6 @@ public:
         }
 
     public:
-        std::atomic<std::size_t> last_acceptance_time;
-
         status_type                        status;
         std::uint16_t                      packet_number;
         transport_unit_type::ack_data_type sender_ack;
@@ -214,31 +210,51 @@ public:
                                                      + it_previous_packet);
             }
 
-            check_protocol_status(node_info, pckt->packets[0]);
+            update_protocol_status(node_info, pckt->packets[0], false);
 
             for (std::size_t i = 0; i < pckt->packets.size(); ++i) {
                 auto &packet_tmp = pckt->packets[i];
 
                 packet_tmp.header.packet_number =
-                    i_packet_number + node_info.packet_number++;
+                    initial_packet_number + node_info.packet_number++;
 
-                // Determines payload size of the packet
-                std::size_t payload_data_size = packet_tmp.buffer.size();
-                if (packet_tmp.header.type
-                    == transport_unit_type::payload_type::session_request) {
-                    payload_data_size = packet_tmp.get_session_request_size();
-                } else if (packet_tmp.header.type
-                           == transport_unit_type::payload_type::session_created) {
-                    payload_data_size = packet_tmp.get_session_created_size();
-                } else if (packet_tmp.header.type
-                           == transport_unit_type::payload_type::session_confirmed) {
-                    payload_data_size = packet_tmp.get_session_confirmed_size();
-                } else if (packet_tmp.header.type
-                           == transport_unit_type::payload_type::data) {
+                // Adds random padding
+                {
+                    // Determines payload size of the packet to define size of random
+                    // padding
+                    std::size_t payload_data_size = packet_tmp.buffer.size();
+                    if (packet_tmp.header.type
+                        == transport_unit_type::payload_type::session_request)
+                        payload_data_size = packet_tmp.get_session_request_size();
+                    else if (packet_tmp.header.type
+                             == transport_unit_type::payload_type::session_created)
+                        payload_data_size = packet_tmp.get_session_created_size();
+                    else if (packet_tmp.header.type
+                             == transport_unit_type::payload_type::session_confirmed)
+                        payload_data_size = packet_tmp.get_session_confirmed_size();
+                    else if (packet_tmp.header.type
+                             == transport_unit_type::payload_type::data)
+                        payload_data_size = packet_tmp.get_payload_data_with_mac_size();
+
+                    // Dummy packet
+                    if (packet_tmp.header.flag == transport_unit_type::flag_type::drop)
+                        payload_data_size = 0;
+
+                    // Adds random padding after payload data
+                    typename transport_unit_type::noise_context_type::cipher_state
+                        cipher_state_tmp;
+                    cipher_state_tmp.input_buffer.set(
+                        {reinterpret_cast<noheap::rbyte *>(packet_tmp.buffer.data()),
+                         packet_tmp.buffer.size()},
+                        std::clamp<std::size_t>(payload_data_size, 0,
+                                                packet_tmp.buffer.size()));
+                    cipher_state_tmp.pad();
+                }
+
+                // Encrypts payload data and authenticates based on the header
+                if (packet_tmp.header.type == transport_unit_type::payload_type::data) {
                     if (!payload_cipher_state)
                         throw noheap::runtime_error("Cipher state for payloads is null.");
-
-                    // Encrypts payload data
                     payload_cipher_state->input_buffer.set(
                         {packet_tmp.buffer.data(),
                          packet_tmp.get_payload_data_with_mac_size()},
@@ -247,25 +263,9 @@ public:
                     payload_cipher_state->encrypt(
                         {reinterpret_cast<noheap::rbyte *>(&packet_tmp.header),
                          sizeof(packet_tmp.header)});
-
-                    payload_data_size = packet_tmp.get_payload_data_with_mac_size();
                 }
 
-                // Dummy packet
-                if (packet_tmp.header.flag == transport_unit_type::flag_type::drop)
-                    payload_data_size = 0;
-
-                // Adds random padding to end payload data
-                typename transport_unit_type::noise_context_type::cipher_state
-                    cipher_state_tmp;
-                cipher_state_tmp.input_buffer.set(
-                    std::span<noheap::rbyte>(
-                        reinterpret_cast<noheap::rbyte *>(packet_tmp.buffer.data()),
-                        packet_tmp.buffer.size()),
-                    payload_data_size);
-                cipher_state_tmp.pad();
-
-                // Generates header obfuscation key based on packet_number
+                // Generates header obfuscation key based on the packet_number
                 noise::buffer_type<sizeof(packet_tmp.header)> obfs_key_tmp{};
                 crypto::chacha_encrypt(
                     {reinterpret_cast<noheap::ubyte *>(obfs_key_tmp.data()),
@@ -301,7 +301,6 @@ public:
 
             auto &node_info =
                 const_cast<decltype(node_info_it->second) &>(node_info_it->second);
-            node_info.last_acceptance_time.store(get_now_ms());
 
             std::size_t payload_packet_it = 0;
             for (; payload_packet_it < pckt->packets.size(); ++payload_packet_it) {
@@ -309,7 +308,7 @@ public:
 
                 // Selects possible packet number
                 std::size_t possible_packet_number =
-                    i_packet_number + node_info.sender_ack.ack_through + 1;
+                    initial_packet_number + node_info.sender_ack.ack_through + 1;
                 bool was_matched = false;
                 for (std::size_t i = 0; i < sizeof(packet_tmp.header.packet_number) * 8;
                      ++i, ++possible_packet_number) {
@@ -363,7 +362,7 @@ public:
                           return el_left.header.packet_number
                                  < el_right.header.packet_number;
                       });
-            check_protocol_status(node_info, pckt->packets[0]);
+            update_protocol_status(node_info, pckt->packets[0], true);
 
             // Checks own ack
             std::ssize_t ack_difference = pckt->packets[0].header.packet_number
@@ -393,20 +392,13 @@ public:
 public:
     void set_obfs_states(typename transport_unit_type::noise_context_type::cipher_state
                                              &_payload_cipher_state,
-                         header_obfs_key_type _header_obfs_key,
-                         std::uint64_t        _i_packet_number) const {
+                         header_obfs_key_type _header_obfs_key) const {
         payload_cipher_state = &_payload_cipher_state;
         std::move(_header_obfs_key.begin(), _header_obfs_key.end(),
                   header_obfs_key.begin());
-        i_packet_number = _i_packet_number;
     }
-    bool check_timeout(const network::buffer_address_type &addr) const {
-        auto node_info_it = get_node_info_it(addr);
-        if (node_info_it == node_info_s.end())
-            throw noheap::runtime_error(this->buffer_owner, "Not found node.");
-
-        return get_now_ms() - node_info_it->second.last_acceptance_time.load()
-               >= termination_timeout_ms;
+    void set_initial_packet_number(std::size_t _initial_packet_number) const {
+        initial_packet_number = _initial_packet_number;
     }
 
 private:
@@ -427,24 +419,29 @@ private:
             const_cast<node_info_s_type &>(node_info_s)
                 .push_back(typename node_info_s_type::value_type{std::move(addr),
                                                                  node_info_type{}});
-            node_info_it->second.last_acceptance_time = get_now_ms();
         }
         return node_info_it;
     }
-    void check_protocol_status(node_info_type            &node_info,
-                               const transport_unit_type &packet) const {
+    void update_protocol_status(node_info_type            &node_info,
+                                const transport_unit_type &packet, bool received) const {
         if (node_info.status == node_info_type::status_type::HS1
             && packet.header.type != transport_unit_type::payload_type::session_request)
             throw noheap::runtime_error("Expected session request packet.");
         else if (node_info.status == node_info_type::status_type::HS2
-                 && packet.header.type
-                        != transport_unit_type ::payload_type::session_created)
+                     && packet.header.type
+                            != transport_unit_type::payload_type::session_created
+                     && !received
+                 || node_info.status == node_info_type::status_type::HS2
+                        && packet.header.type
+                               != transport_unit_type::payload_type::session_request
+                        && received)
             throw noheap::runtime_error("Expected session created packet.");
         else if (node_info.status == node_info_type::status_type::HS3
                  && packet.header.type
                         != transport_unit_type::payload_type::session_confirmed)
             throw noheap::runtime_error("Expected session confirmed packet.");
-        else if (node_info.status != node_info_type::status_type::CONNECTED)
+        else if (node_info.status != node_info_type::status_type::CONNECTED
+                 && packet.header.flag != transport_unit_type::flag_type::wait_next)
             node_info.status = typename node_info_type::status_type(
                 static_cast<std::size_t>(node_info.status) + 1);
     }
@@ -453,7 +450,7 @@ private:
     mutable typename transport_unit_type::noise_context_type::cipher_state
                                 *payload_cipher_state;
     mutable header_obfs_key_type header_obfs_key;
-    mutable std::uint64_t        i_packet_number = 0;
+    mutable std::uint16_t        initial_packet_number = 0;
     mutable node_info_s_type     node_info_s;
 };
 
@@ -646,7 +643,7 @@ private:
                 public_key = local_public_key;
         }
 
-        // Derives shared public key
+        // Derives shared key using time stamp
         shared_key_on_time = noheap::to_buffer<decltype(public_key)>(
             std::size_t(get_now_ms() / 1000)
             + std::size_t(termination_timeout_ms / 1000));

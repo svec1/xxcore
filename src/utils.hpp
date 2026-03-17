@@ -88,14 +88,19 @@ constexpr TReturn to_new_buffer(TSource &&buffer) {
 }
 
 template<Buffer_bytes TSource>
-constexpr buffer_type<char, std::decay_t<TSource &>().size() * 2>
+constexpr buffer_type<char, (4 - (std::decay_t<TSource &>().size() % 4)) % 4>
     to_hex_string(TSource &&buffer) {
     decltype(to_hex_string(buffer)) buffer_tmp{};
 
     auto it = buffer_tmp.begin();
 
-    for (auto ch : buffer)
-        it = std::format_to_n(it, 2, "{:X}", ch).out;
+    for (std::size_t i = 0; i < buffer_tmp.size() - buffer.size(); ++i)
+        it = std::format_to_n(it, 1, "\0").out;
+
+    for (auto ch : buffer) {
+        it = std::format_to_n(it, 1, "{:X}", ch >> 4).out;
+        it = std::format_to_n(it, 1, "{:X}", (ch << 4) >> 4).out;
+    }
 
     return buffer_tmp;
 }
