@@ -41,6 +41,13 @@ public:
 
     void run_stream_session();
 
+public:
+    static constexpr noheap::log_impl::owner_impl::buffer_type buffer_owner =
+        noheap::log_impl::create_owner("ESSU_SESSION");
+
+private:
+    static constexpr log_handler log{buffer_owner};
+
 private:
     address_type addr;
 
@@ -72,38 +79,38 @@ void essu_session<v, TPacket, Action>::establish_connection(
 
     auto buffer_addr = noise_udp_stream.get_address_bytes(addr);
 
-    while (true) {
-        auto action = noise_context.get_action();
-        if (action == noise::noise_action::WRITE_MESSAGE)
-            noise_udp_stream.template send_to<decltype(pckt)>(pckt, addr);
-        else if (action == noise::noise_action::READ_MESSAGE) {
-            future_wrapper f([&]() {
-                noise_udp_stream.template async_receive_from<decltype(pckt)>(pckt);
-                noise_udp_stream.io_context_run();
-            });
+    try {
+        while (true) {
+            auto action = noise_context.get_action();
+            if (action == noise::noise_action::WRITE_MESSAGE)
+                noise_udp_stream.template send_to<decltype(pckt)>(pckt, addr);
+            else if (action == noise::noise_action::READ_MESSAGE) {
+                future_wrapper f([&]() {
+                    noise_udp_stream.template async_receive_from<decltype(pckt)>(pckt);
+                    noise_udp_stream.io_context_run();
+                });
 
-            // Waits to receive packet
-            if (!f.is_completed(essu::termination_timeout_ms)) {
-                try {
+                // Waits to receive packet
+                if (!f.is_completed(essu::termination_timeout_ms)) {
                     noise_udp_stream.socket_cancel();
-                    f.get();
-                } catch (noheap::runtime_error &) {
+                    throw noheap::runtime_error(buffer_owner,
+                                                "Timeout has been reached.");
                 }
 
-                auto buffer_tmp = noheap::to_hex_string(buffer_addr);
-                throw noheap::runtime_error(
-                    "Timeout has been reached: {}",
-                    std::string_view(buffer_tmp.data(), buffer_tmp.size()));
-            }
+                f.get();
 
-            f.get();
+            } else
+                break;
+        }
 
-        } else
-            break;
+        payload_cipher_state = noise_context.dump();
+        udp_stream           = std::move(noise_udp_stream);
+    } catch (noheap::runtime_error &excp) {
+        auto buffer_tmp = noheap::to_hex_string(buffer_addr);
+        throw noheap::runtime_error(
+            buffer_owner, "Failed to establish connection: {}. {}",
+            std::string_view(buffer_tmp.data(), buffer_tmp.size()), excp.what());
     }
-    payload_cipher_state = noise_context.dump();
-
-    udp_stream = std::move(noise_udp_stream);
 }
 template<network::ipv v, network::Packet TPacket, network::Derived_from_action Action>
 void essu_session<v, TPacket, Action>::run_stream_session() {

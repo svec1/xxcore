@@ -26,7 +26,7 @@ public:
     static constexpr noheap::log_impl::owner_impl::buffer_type buffer_owner =
         noheap::log_impl::create_owner("CRYPTO");
 
-protected:
+private:
     static constexpr log_handler log{buffer_owner};
 };
 template<noheap::Buffer_bytes TKey>

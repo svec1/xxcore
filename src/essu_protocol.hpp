@@ -210,8 +210,6 @@ public:
                                                      + it_previous_packet);
             }
 
-            update_protocol_status(node_info, pckt->packets[0], false);
-
             for (std::size_t i = 0; i < pckt->packets.size(); ++i) {
                 auto &packet_tmp = pckt->packets[i];
 
@@ -280,6 +278,8 @@ public:
                                reinterpret_cast<noheap::rbyte *>(&packet_tmp.header),
                                std::bit_xor{});
             }
+
+            update_protocol_status(node_info, pckt->packets[0], false);
 
             // Shuffle packets in batch
             std::random_device rd;
