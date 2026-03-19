@@ -6,4 +6,5 @@
 
 </div>
 
-###### *Communication is performed through dynamically resolved NT-Units that relay, relay-and-mix, or aggregate data, enabling indirect multi-node message routing.*
+###### *Communication is performed through dynamically resolved trusted nodes that relay, relay-and-mix, or aggregate data, enabling indirect multi-node message routing.*
+###### Without HEAP!

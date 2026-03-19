@@ -41,6 +41,8 @@ private:
         noise_context_type::dh_key_type remote_public_key;
         noise_context_type::dh_key_type pre_shared_key;
     };
+
+    // For test
     struct audio_action final : network::action<packet_type::packet_type> {
         static constexpr std::size_t max_stream_size = 32;
 
@@ -93,7 +95,7 @@ xxcore_service::xxcore_service(address_type &&_addr, asio::ip::port_type _port)
 }
 
 void xxcore_service::run() {
-    essu_session<v, packet_type, audio_action> stream(addr, port);
+    essu_session<v, packet_type, audio_action> stream({}, addr, port);
 
     stream.establish_connection(config.pattern, config.role, {},
                                 {config.local_private_key, config.local_public_key},
@@ -113,8 +115,8 @@ void xxcore_service::configurate(buffer_config_type &&buffer) {
         static constexpr std::string_view remote_public_string = "remote_public_key";
         static constexpr std::string_view pre_shared_string    = "pre_shared_key";
 
-        noheap::buffer_bytes_type<8192, std::uint8_t> json_buffer_tmp;
-        noheap::buffer_bytes_type<1024>               buffer_tmp{};
+        noheap::buffer_bytes_type<8192, noheap::ubyte> json_buffer_tmp;
+        noheap::buffer_bytes_type<1024>                buffer_tmp{};
 
         json::static_resource json_mr(json_buffer_tmp.data(), json_buffer_tmp.size());
 

@@ -100,8 +100,6 @@ constexpr buffer_type<char, std::decay_t<TSource>{}.size()
     for (std::size_t i = 0; i < buffer_tmp.size() - buffer.size(); ++i)
         it = std::format_to_n(it, 1, "\0").out;
 
-    std::println("{}", buffer);
-
     for (auto ch : buffer) {
         if (ch >> 4)
             it = std::format_to_n(it, 1, "{:x}", ch >> 4).out;
@@ -214,9 +212,9 @@ public:
                          .out;
         }
 
-        end_it = std::format_to_n(end_it, std::abs(std::distance(buffer.end(), end_it)),
-                                  format, std::forward<Args>(args)...)
-                     .out;
+        end_it  = std::format_to_n(end_it, std::abs(std::distance(buffer.end(), end_it)),
+                                   format, std::forward<Args>(args)...)
+                      .out;
         *end_it = '\n';
         return buffer;
     }

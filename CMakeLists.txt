@@ -2,69 +2,39 @@ cmake_minimum_required(VERSION 3.5 FATAL_ERROR)
 
 option(SNDIO "Use sndio audio interface." OFF)
 
-set(UUV unix_udp_voice)
+set(XXCORE xxcore)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS YES)
 set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_COMPILER clang++)
 file(GLOB_RECURSE SRC_FILES src/*.cpp)
 
-project(${UUV})
-add_executable(${UUV} ${SRC_FILES})
+project(${XXCORE})
+add_executable(${XXCORE} ${SRC_FILES})
         
+set(OPUS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/opus)
+set(OPUS_INCLUDE_DIR ${OPUS_DIR}/include)
 set(OPUS_BUILD_SHARED_LIBRARY ON)
 set(OPUS_VAR_ARRAYS ON)
 set(OPUS_NONTHREADSAFE_PSEUDOSTACK OFF)
 set(OPUS_USE_ALLOCA OFF)
-add_subdirectory(thirdparty/opus)	
+add_subdirectory(${OPUS_DIR})	
 
-set(NOISE_C_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/noise-c)
-set(OPUS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/opus)
-
-file(GLOB_RECURSE NOISE_C_SOURCE_FILES ${NOISE_C_DIR}/src/*)
-set(NOISE_C_INCLUDE_DIR ${NOISE_C_DIR}/include ${NOISE_C_DIR}/src/crypto)
-set(
-    NOISE_C_LIBS
-    ${NOISE_C_DIR}/src/protocol/libnoiseprotocol.a
-    ${NOISE_C_DIR}/src/keys/libnoisekeys.a
-)
-
-add_custom_command(
-    OUTPUT ./configure
-    WORKING_DIRECTORY ${NOISE_C_DIR}
-    COMMAND ${NOISE_C_DIR}/autogen.sh > /dev/null
-    VERBATIM
-)
-
-set(noise-c_configure_output src/Makefile src/protocol/Makefile src/keys/Makefile)
-add_custom_command(
-    OUTPUT ${noise-c_configure_output}  
-    WORKING_DIRECTORY ${NOISE_C_DIR}
-    COMMAND ./configure > /dev/null
-    DEPENDS ./configure
-    VERBATIM
-)
-
-add_custom_target(
-    noise-c
-    WORKING_DIRECTORY ${NOISE_C_DIR}
-    COMMAND make > /dev/null
-    DEPENDS ${noise-c_configure_output}
-    VERBATIM
-)
-add_dependencies(${UUV} noise-c)
+include(cmake/noise_c_target.cmake)
+add_dependencies(${XXCORE} ${NOISE_C})
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
 
 target_include_directories(
-    ${UUV}
+    ${XXCORE}
     PUBLIC 
     src/
-    ${LIBBOOST_PATH}
-    ${OPUS_DIR}/include
+    ${LIBBOOST_INCLUDE_DIR}
+    ${OPUS_INCLUDE_DIR}
 	${NOISE_C_INCLUDE_DIR}
 )
 target_link_libraries(
-    ${UUV}
+    ${XXCORE}
     PRIVATE
     Opus::opus
     ${NOISE_C_LIBS}
@@ -77,21 +47,21 @@ if(SNDIO AND (LINUX OR BSD))
 	endif()
 	
 	message(STATUS "Building with sndio.")
-	target_link_libraries(${UUV} PRIVATE ${LIBSNDIO})
-	target_compile_options(${UUV} PRIVATE "-DSNDIO")
+	target_link_libraries(${XXCORE} PRIVATE ${LIBSNDIO})
+	target_compile_options(${XXCORE} PRIVATE "-DSNDIO")
 elseif(LINUX)
 	find_package(ALSA)
 	
     set(AUDIO_SYSTEM "ALSA")
-    target_link_libraries(${UUV} PRIVATE ALSA::ALSA)
-	target_compile_options(${UUV} PRIVATE "-DALSA")
+    target_link_libraries(${XXCORE} PRIVATE ALSA::ALSA)
+	target_compile_options(${XXCORE} PRIVATE "-DALSA")
 elseif(BSD)
 	message(STATUS "Building with ${CMAKE_SYSTEM_NAME} audio.")
 	if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
-		target_compile_options(${UUV} PRIVATE "-DFREEBSD_AUDIO")
+		target_compile_options(${XXCORE} PRIVATE "-DFREEBSD_AUDIO")
 	elseif(CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
-		target_compile_options(${UUV} PRIVATE "-DOPENBSD_AUDIO")
+		target_compile_options(${XXCORE} PRIVATE "-DOPENBSD_AUDIO")
 	elseif(CMAKE_SYSTEM_NAME STREQUAL "NetBSD")
-		target_compile_options(${UUV} PRIVATE "-DNETBSD_AUDIO")
+		target_compile_options(${XXCORE} PRIVATE "-DNETBSD_AUDIO")
 	endif()
 endif()

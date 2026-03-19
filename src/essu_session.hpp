@@ -29,9 +29,10 @@ public:
     using noise_context_type = noise_handshake_action::noise_context_type;
 
 public:
-    essu_session(address_type _addr, port_type port);
+    essu_session(address_type _own_addr, address_type _remote_addr, port_type port);
 
 public:
+    // Establishes connection with node(remote_addr): performs noise handshake
     void establish_connection(
         noise::noise_pattern pattern, noise::noise_role role,
         noise_context_type::prologue_extention_type                   &&ext,
@@ -49,15 +50,18 @@ private:
     static constexpr log_handler log{buffer_owner};
 
 private:
-    address_type addr;
+    address_type own_addr;
+    address_type remote_addr;
 
     network::net_stream_udp<Action, v> udp_stream;
-    noise_context_type::cipher_state   payload_cipher_state;
+    noise_context_type::cipher_state   payload_cipher_state{};
+    essu::header_obfs_key_type         header_obfs_key{};
 };
 
 template<network::ipv v, network::Packet TPacket, network::Derived_from_action Action>
-essu_session<v, TPacket, Action>::essu_session(address_type _addr, port_type port)
-    : addr(_addr), udp_stream(port) {
+essu_session<v, TPacket, Action>::essu_session(address_type _own_addr,
+                                               address_type _remote_addr, port_type port)
+    : own_addr(_own_addr), remote_addr(_remote_addr), udp_stream(port) {
 }
 template<network::ipv v, network::Packet TPacket, network::Derived_from_action Action>
 void essu_session<v, TPacket, Action>::establish_connection(
@@ -70,20 +74,25 @@ void essu_session<v, TPacket, Action>::establish_connection(
         udp_stream.get_port());
     noise_packet_type pckt{};
 
+    auto buffer_own_addr    = noise_udp_stream.get_address_bytes(own_addr);
+    auto buffer_remote_addr = noise_udp_stream.get_address_bytes(remote_addr);
+
+    // Init noise context
     auto &noise_context = noise_udp_stream.get_action();
-    noise_context.init(pattern, role, std::move(ext), std::move(local_keypair),
-                       std::move(remote_public_key), pre_shared_key);
+    noise_context.init(buffer_own_addr, buffer_remote_addr, pattern, role, std::move(ext),
+                       std::move(local_keypair), std::move(remote_public_key),
+                       pre_shared_key);
+    header_obfs_key = noise_context.get_header_obfs_key();
 
     const auto &protocol = pckt.get_protocol();
-    protocol.set_obfs_states(payload_cipher_state, noise_context.get_header_obfs_key());
+    protocol.create_node_info(buffer_remote_addr, payload_cipher_state, header_obfs_key);
 
-    auto buffer_addr = noise_udp_stream.get_address_bytes(addr);
-
+    // Performs noise handshake
     try {
         while (true) {
             auto action = noise_context.get_action();
             if (action == noise::noise_action::WRITE_MESSAGE)
-                noise_udp_stream.template send_to<decltype(pckt)>(pckt, addr);
+                noise_udp_stream.template send_to<decltype(pckt)>(pckt, remote_addr);
             else if (action == noise::noise_action::READ_MESSAGE) {
                 future_wrapper f([&]() {
                     noise_udp_stream.template async_receive_from<decltype(pckt)>(pckt);
@@ -106,14 +115,15 @@ void essu_session<v, TPacket, Action>::establish_connection(
         payload_cipher_state = noise_context.dump();
         udp_stream           = std::move(noise_udp_stream);
     } catch (noheap::runtime_error &excp) {
-        auto buffer_tmp = noheap::to_hex_string(buffer_addr);
+        auto buffer_tmp = noheap::to_hex_string(buffer_remote_addr);
         throw noheap::runtime_error(
-            buffer_owner, "Failed to establish connection: {}. {}",
+            buffer_owner, "{}: Failed to establish connection. {}",
             std::string_view(buffer_tmp.data(), buffer_tmp.size()), excp.what());
     }
 }
 template<network::ipv v, network::Packet TPacket, network::Derived_from_action Action>
 void essu_session<v, TPacket, Action>::run_stream_session() {
+    // TODO
     std::future<void> payload_handler = std::async(std::launch::async, [&] {
         packet_type pckt_for_receiving{}, pckt_for_sending{};
 

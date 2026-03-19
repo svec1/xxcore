@@ -21,6 +21,7 @@ struct transport_data_config {
     std::size_t      payload_data_size;
 };
 
+// Packet
 template<transport_data_config config>
 struct transport_data_type {
     using noise_context_type = noise::noise_context<config.ecdh>;
@@ -42,13 +43,7 @@ public:
     };
 
 public:
-    struct ack_data_type {
-        std::uint64_t ranges;
-        std::uint16_t ack_through;
-        std::uint16_t acnt;
-    };
     struct header_data_type {
-        ack_data_type ack;
         std::uint16_t destination_id;
         std::uint16_t source_id;
         std::uint16_t packet_number;
@@ -106,7 +101,7 @@ public:
     noheap::buffer_bytes_type<get_buffer_size(), noheap::rbyte> buffer{};
 };
 
-// batch
+// Batch
 template<transport_data_config _config>
 struct extention_payload_data_type {
     using transport_unit_type = transport_data_type<_config>;
@@ -143,20 +138,22 @@ public:
         node_info_type() = default;
         node_info_type(const node_info_type &node_info) { this->operator=(node_info); }
         node_info_type &operator=(const node_info_type &node_info) {
-            status           = node_info.status;
-            sender_ack       = node_info.sender_ack;
-            receiver_ack     = node_info.receiver_ack;
-            previous_packets = node_info.previous_packets;
+            status                 = node_info.status;
+            sender_packet_number   = node_info.sender_packet_number;
+            receiver_packet_number = node_info.receiver_packet_number;
+            payload_cipher_state_p = node_info.payload_cipher_state_p;
+            header_obfs_key_p      = node_info.header_obfs_key_p;
             return *this;
         }
 
     public:
-        status_type                        status;
-        std::uint16_t                      packet_number;
-        transport_unit_type::ack_data_type sender_ack;
-        transport_unit_type::ack_data_type receiver_ack;
+        status_type   status;
+        std::uint16_t sender_packet_number;
+        std::uint16_t receiver_packet_number;
 
-        noheap::monotonic_array<packet_type, max_node_buffered_packets> previous_packets;
+        typename transport_unit_type::noise_context_type::cipher_state
+                                   *payload_cipher_state_p;
+        const header_obfs_key_type *header_obfs_key_p;
     };
     using node_info_s_type =
         noheap::monotonic_array<std::pair<network::buffer_address_type, node_info_type>,
@@ -167,54 +164,20 @@ public:
         prepare(packet_type &pckt, network::buffer_address_type addr,
                 transport_protocol_type::callback_prepare_type callback) const override {
         try {
-            auto node_info_it = get_node_info_it(addr);
+            auto node_info_it = find_node_info(addr);
             if (node_info_it == node_info_s.end())
-                throw noheap::runtime_error(
-                    "The node connection limit has been reached.");
+                throw noheap::runtime_error("Not found node info.");
+            auto &node_info =
+                const_cast<decltype(node_info_it->second) &>(node_info_it->second);
 
             callback(pckt);
 
-            auto &node_info =
-                const_cast<decltype(node_info_it->second) &>(node_info_it->second);
-            pckt->packets[0].header.ack = node_info.sender_ack;
-            node_info.previous_packets.push_back(pckt);
-
-            // Calculates count of payload packets in batch
-            std::size_t payload_packets_count = 0;
-            for (std::size_t i = 0; i < pckt->packets.size(); ++i) {
-                if (pckt->packets[i].header.flag == transport_unit_type::flag_type::drop)
-                    break;
-                ++payload_packets_count;
-            }
-
-            // Prepare ack-block based on receiver_ack(it was accepted)
-            for (std::size_t i = pckt->packets.size();
-                 i < sizeof(node_info.sender_ack.ranges) - pckt->packets.size()
-                 && i / sizeof(node_info.sender_ack.ranges)
-                        < node_info.packet_number - node_info.receiver_ack.ack_through;
-                 i += pckt->packets.size()) {
-                std::size_t it_previous_packet = node_info.packet_number
-                                                 - node_info.receiver_ack.ack_through
-                                                 + i / pckt->packets.size();
-                if (!noheap::get_bits(node_info.receiver_ack.ranges, i,
-                                      pckt->packets.size())) {
-                    if (it_previous_packet >= max_node_buffered_packets)
-                        throw noheap::runtime_error("The packet has been lost.");
-                    pckt->packets[payload_packets_count] =
-                        node_info.previous_packets[it_previous_packet]->packets[0];
-                    pckt->packets[payload_packets_count + 1] =
-                        node_info.previous_packets[it_previous_packet]->packets[1];
-                    break;
-                } else
-                    node_info.previous_packets.erase(node_info.previous_packets.begin()
-                                                     + it_previous_packet);
-            }
+            update_protocol_status(node_info, pckt->packets[0]);
 
             for (std::size_t i = 0; i < pckt->packets.size(); ++i) {
                 auto &packet_tmp = pckt->packets[i];
 
-                packet_tmp.header.packet_number =
-                    initial_packet_number + node_info.packet_number++;
+                packet_tmp.header.packet_number = node_info.sender_packet_number++;
 
                 // Adds random padding
                 {
@@ -251,14 +214,15 @@ public:
 
                 // Encrypts payload data and authenticates based on the header
                 if (packet_tmp.header.type == transport_unit_type::payload_type::data) {
-                    if (!payload_cipher_state)
+                    if (!node_info.payload_cipher_state_p)
                         throw noheap::runtime_error("Cipher state for payloads is null.");
-                    payload_cipher_state->input_buffer.set(
+                    node_info.payload_cipher_state_p->input_buffer.set(
                         {packet_tmp.buffer.data(),
                          packet_tmp.get_payload_data_with_mac_size()},
                         packet_tmp.get_payload_data_size());
-                    payload_cipher_state->set_nonce(packet_tmp.header.packet_number);
-                    payload_cipher_state->encrypt(
+                    node_info.payload_cipher_state_p->set_nonce(
+                        packet_tmp.header.packet_number);
+                    node_info.payload_cipher_state_p->encrypt(
                         {reinterpret_cast<noheap::rbyte *>(&packet_tmp.header),
                          sizeof(packet_tmp.header)});
                 }
@@ -268,7 +232,7 @@ public:
                 crypto::chacha_encrypt(
                     {reinterpret_cast<noheap::ubyte *>(obfs_key_tmp.data()),
                      obfs_key_tmp.size()},
-                    header_obfs_key, {}, packet_tmp.header.packet_number);
+                    *node_info.header_obfs_key_p, {}, packet_tmp.header.packet_number);
 
                 // Adds header data obfuscation
                 std::transform(reinterpret_cast<noheap::rbyte *>(&packet_tmp.header),
@@ -278,8 +242,6 @@ public:
                                reinterpret_cast<noheap::rbyte *>(&packet_tmp.header),
                                std::bit_xor{});
             }
-
-            update_protocol_status(node_info, pckt->packets[0], false);
 
             // Shuffle packets in batch
             std::random_device rd;
@@ -295,7 +257,7 @@ public:
         handle(packet_type &pckt, network::buffer_address_type addr,
                transport_protocol_type::callback_handle_type callback) const override {
         try {
-            auto node_info_it = get_node_info_it(addr);
+            auto node_info_it = find_node_info(addr);
             if (node_info_it == node_info_s.end())
                 return;
 
@@ -307,9 +269,8 @@ public:
                 auto &packet_tmp = pckt->packets[payload_packet_it];
 
                 // Selects possible packet number
-                std::size_t possible_packet_number =
-                    initial_packet_number + node_info.sender_ack.ack_through + 1;
-                bool was_matched = false;
+                std::size_t possible_packet_number = node_info.receiver_packet_number++;
+                bool        was_matched            = false;
                 for (std::size_t i = 0; i < sizeof(packet_tmp.header.packet_number) * 8;
                      ++i, ++possible_packet_number) {
                     decltype(auto) test_packet = packet_tmp;
@@ -319,7 +280,7 @@ public:
                     crypto::chacha_encrypt(
                         {reinterpret_cast<noheap::ubyte *>(obfs_key_tmp.data()),
                          obfs_key_tmp.size()},
-                        header_obfs_key, {}, possible_packet_number);
+                        *node_info.header_obfs_key_p, {}, possible_packet_number);
 
                     // Deletes header data obfuscation
                     std::transform(reinterpret_cast<noheap::rbyte *>(&test_packet.header),
@@ -342,15 +303,16 @@ public:
                     continue;
 
                 if (packet_tmp.header.type == transport_unit_type::payload_type::data) {
-                    if (!payload_cipher_state)
+                    if (!node_info.payload_cipher_state_p)
                         throw noheap::runtime_error("Cipher state for payloads is null.");
 
                     // Decrypts payload data
-                    payload_cipher_state->output_buffer.set(
+                    node_info.payload_cipher_state_p->output_buffer.set(
                         {packet_tmp.buffer.data(), packet_tmp.buffer.size()},
                         packet_tmp.get_payload_data_with_mac_size());
-                    payload_cipher_state->set_nonce(packet_tmp.header.packet_number);
-                    payload_cipher_state->decrypt(
+                    node_info.payload_cipher_state_p->set_nonce(
+                        packet_tmp.header.packet_number);
+                    node_info.payload_cipher_state_p->decrypt(
                         {reinterpret_cast<noheap::rbyte *>(&packet_tmp.header),
                          sizeof(packet_tmp.header)});
                 }
@@ -362,25 +324,7 @@ public:
                           return el_left.header.packet_number
                                  < el_right.header.packet_number;
                       });
-            update_protocol_status(node_info, pckt->packets[0], true);
-
-            // Checks own ack
-            std::ssize_t ack_difference = pckt->packets[0].header.packet_number
-                                          - node_info.sender_ack.ack_through
-                                          - (node_info.sender_ack.ack_through ? 1 : 0);
-
-            if (ack_difference)
-                node_info.sender_ack.ranges |= noheap::get_bits(
-                    std::numeric_limits<decltype(node_info.sender_ack.ranges)>::max(),
-                    ack_difference, batch_packets_count);
-            else
-                node_info.sender_ack.ack_through =
-                    pckt->packets[batch_packets_count - 1].header.packet_number;
-
-            // Saves remote ack
-            node_info.receiver_ack = pckt->packets[0].header.ack;
-            if (node_info.packet_number - node_info.receiver_ack.ack_through < 0)
-                node_info_s.erase(node_info_it);
+            update_protocol_status(node_info, pckt->packets[0]);
 
             callback(std::move(pckt));
         } catch (noheap::runtime_error &excp) {
@@ -390,51 +334,52 @@ public:
     };
 
 public:
-    void set_obfs_states(typename transport_unit_type::noise_context_type::cipher_state
-                                             &_payload_cipher_state,
-                         header_obfs_key_type _header_obfs_key) const {
-        payload_cipher_state = &_payload_cipher_state;
-        std::move(_header_obfs_key.begin(), _header_obfs_key.end(),
-                  header_obfs_key.begin());
-    }
-    void set_initial_packet_number(std::size_t _initial_packet_number) const {
-        initial_packet_number = _initial_packet_number;
-    }
-
-private:
-    node_info_s_type::iterator get_node_info_it(network::buffer_address_type addr) const {
-        auto node_info_it = node_info_s.end();
-        if (node_info_it = std::find_if(
-                node_info_s.begin(), node_info_s.end(),
-                [&](const auto &el) {
-                    return noheap::is_equal_bytes<const noheap::ubyte>(
-                        {reinterpret_cast<const noheap::ubyte *>(el.first.data()),
-                         el.first.size()},
-                        {reinterpret_cast<const noheap::ubyte *>(addr.data()),
-                         addr.size()});
-                });
-            node_info_it == node_info_s.end()) {
+    void create_node_info(const network::buffer_address_type &addr,
+                          typename transport_unit_type::noise_context_type::cipher_state
+                                                     &payload_cipher_state,
+                          const header_obfs_key_type &header_obfs_key) const {
+        auto node_info_it = find_node_info(addr);
+        if (node_info_it == node_info_s.end()) {
             if (node_info_s.size() == max_node_connection)
-                return node_info_it;
+                throw noheap::runtime_error(
+                    "The node connection limit has been reached.");
+
             const_cast<node_info_s_type &>(node_info_s)
                 .push_back(typename node_info_s_type::value_type{std::move(addr),
                                                                  node_info_type{}});
         }
-        return node_info_it;
+
+        node_info_it->second.payload_cipher_state_p = &payload_cipher_state;
+        node_info_it->second.header_obfs_key_p      = &header_obfs_key;
+    }
+    void set_packet_number(const network::buffer_address_type &addr,
+                           std::size_t                         packet_number) const {
+        auto node_info_it = find_node_info(addr);
+        if (node_info_it == node_info_s.end())
+            throw noheap::runtime_error("Not found node info.");
+
+        node_info_it->second.sender_packet_number   = packet_number;
+        node_info_it->second.receiver_packet_number = packet_number;
+    }
+
+private:
+    node_info_s_type::iterator
+        find_node_info(const network::buffer_address_type &addr) const {
+        return std::find_if(node_info_s.begin(), node_info_s.end(), [&](const auto &el) {
+            return noheap::is_equal_bytes<const noheap::ubyte>(
+                {reinterpret_cast<const noheap::ubyte *>(el.first.data()),
+                 el.first.size()},
+                {reinterpret_cast<const noheap::ubyte *>(addr.data()), addr.size()});
+        });
     }
     void update_protocol_status(node_info_type            &node_info,
-                                const transport_unit_type &packet, bool received) const {
+                                const transport_unit_type &packet) const {
         if (node_info.status == node_info_type::status_type::HS1
             && packet.header.type != transport_unit_type::payload_type::session_request)
             throw noheap::runtime_error("Expected session request packet.");
         else if (node_info.status == node_info_type::status_type::HS2
-                     && packet.header.type
-                            != transport_unit_type::payload_type::session_created
-                     && !received
-                 || node_info.status == node_info_type::status_type::HS2
-                        && packet.header.type
-                               != transport_unit_type::payload_type::session_request
-                        && received)
+                 && packet.header.type
+                        != transport_unit_type::payload_type::session_created)
             throw noheap::runtime_error("Expected session created packet.");
         else if (node_info.status == node_info_type::status_type::HS3
                  && packet.header.type
@@ -447,11 +392,7 @@ private:
     }
 
 private:
-    mutable typename transport_unit_type::noise_context_type::cipher_state
-                                *payload_cipher_state;
-    mutable header_obfs_key_type header_obfs_key;
-    mutable std::uint16_t        initial_packet_number = 0;
-    mutable node_info_s_type     node_info_s;
+    mutable node_info_s_type node_info_s;
 };
 
 // Noise handshake action for establishing shared secret key
@@ -464,7 +405,7 @@ public:
         packet_type::extention_data_type::transport_unit_type::noise_context_type;
     using ephemeral_obfs_key_type = noise_context_type::dh_key_type;
 
-    static constexpr std::size_t count_handshake_message = 3; // For XK
+    static constexpr std::size_t count_handshake_message = 3; // For XX, XK
 
 public:
     constexpr void init_packet(packet_type &pckt) override {
@@ -579,6 +520,7 @@ public:
 
 public:
     void init(
+        network::buffer_address_type own_addr, network::buffer_address_type remote_addr,
         noise::noise_pattern pattern, noise::noise_role role,
         noise_context_type::prologue_extention_type                   &&ext,
         noise_context_type::keypair_type                              &&local_keypair,
@@ -593,9 +535,9 @@ public:
         if (pre_shared_key.has_value())
             noise_ctx.set_pre_shared_key(std::move(*pre_shared_key));
 
-        generate_ephemeral_obfs_key(pattern, role, local_keypair.pub, remote_public_key,
-                                    pre_shared_key, ephemeral_obfs_key,
-                                    ephemeral_header_obfs_key);
+        generate_ephemeral_obfs_key(own_addr, remote_addr, pattern, role,
+                                    local_keypair.pub, remote_public_key, pre_shared_key,
+                                    ephemeral_obfs_key, ephemeral_header_obfs_key);
 
         noise_ctx.start();
 
@@ -627,14 +569,14 @@ private:
             throw noheap::runtime_error("Handshake already completed.");
     }
     static void generate_ephemeral_obfs_key(
+        network::buffer_address_type own_addr, network::buffer_address_type remote_addr,
         noise::noise_pattern pattern, noise::noise_role role,
         noise_context_type::dh_key_type                                &local_public_key,
         noise_context_type::dh_key_type                                &remote_public_key,
         std::optional<typename noise_context_type::pre_shared_key_type> pre_shared_key,
         ephemeral_obfs_key_type &ephemeral_obfs_key,
-        header_obfs_key_type    &ephemeral_header_obfs_key) {
+        header_obfs_key_type    &ephemeral_header_obfs_key_p) {
         typename noise_context_type::dh_key_type public_key{};
-        typename noise_context_type::dh_key_type shared_key_on_time{};
 
         if (pattern == noise::noise_pattern::XK) {
             if (role == noise::noise_role::INITIATOR)
@@ -643,11 +585,12 @@ private:
                 public_key = local_public_key;
         }
 
-        // Derives shared key using time stamp
-        shared_key_on_time = noheap::to_buffer<decltype(public_key)>(
-            std::size_t(get_now_ms() / 1000)
-            + std::size_t(termination_timeout_ms / 1000));
-        std::transform(public_key.begin(), public_key.end(), shared_key_on_time.begin(),
+        // Derives shared key using own and remote addresses
+        std::transform(public_key.begin(), public_key.begin() + own_addr.size(),
+                       reinterpret_cast<noheap::rbyte *>(own_addr.begin()),
+                       public_key.begin(), std::bit_xor{});
+        std::transform(public_key.begin(), public_key.begin() + remote_addr.size(),
+                       reinterpret_cast<noheap::rbyte *>(remote_addr.begin()),
                        public_key.begin(), std::bit_xor{});
 
         // Generates keystream
@@ -663,7 +606,7 @@ private:
         std::copy(keystream.begin(), keystream.begin() + ephemeral_obfs_key.size(),
                   ephemeral_obfs_key.begin());
         std::copy(keystream.begin() + ephemeral_obfs_key.size(), keystream.end(),
-                  ephemeral_header_obfs_key.begin());
+                  ephemeral_header_obfs_key_p.begin());
     }
 
 private:

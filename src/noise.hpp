@@ -385,7 +385,9 @@ void noise_context<_ecdh>::cipher_state::set_nonce(std::uint64_t nonce) {
 template<ecdh_type _ecdh>
 void noise_context<_ecdh>::cipher_state::set_key(const dh_key_type &key) {
     std::size_t ret;
-    if ((ret = noise_cipherstate_init_key(encrypt_state, key.data(), key.size()))
+    if ((ret = noise_cipherstate_init_key(
+             encrypt_state, reinterpret_cast<const noheap::ubyte *>(key.data()),
+             key.size()))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to set key.");
 
@@ -616,7 +618,7 @@ noise_context<_ecdh>::dh_key_type noise_context<_ecdh>::get_remote_public_key() 
 
     std::size_t ret;
     if ((ret = noise_dhstate_get_public_key(
-             dh, reinterpret_cast<const noheap::ubyte *>(buffer_tmp.data()),
+             dh, reinterpret_cast<noheap::ubyte *>(buffer_tmp.data()),
              buffer_tmp.size())))
         handle_error(ret, "Failed to get remote public key.");
 
