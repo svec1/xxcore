@@ -23,20 +23,24 @@ template<typename T>
 struct packet_native_type;
 template<typename T>
 concept Packet_native_t =
-    std::same_as<T, packet_native_type<typename T::extention_data_type>>;
+    std::same_as<std::decay_t<T>,
+                 packet_native_type<typename std::decay_t<T>::extention_data_type>>;
 
 template<Packet_native_t T, noheap::log_impl::owner_impl::buffer_type _buffer_owner>
 struct protocol_native_type;
 template<typename T>
 concept Derived_from_protocol_native_t =
-    std::derived_from<T, protocol_native_type<typename T::packet_type, T::buffer_owner>>;
+    std::derived_from<std::decay_t<T>,
+                      protocol_native_type<typename std::decay_t<T>::packet_type,
+                                           std::decay_t<T>::buffer_owner>>;
 
 template<Packet_native_t TPacket>
 struct action;
 template<Packet_native_t TPacket>
 struct decoy_action;
 template<typename T>
-concept Derived_from_action = std::derived_from<T, action<typename T::packet_type>>;
+concept Derived_from_action =
+    std::derived_from<std::decay_t<T>, action<typename std::decay_t<T>::packet_type>>;
 
 template<typename T>
 struct packet_native_type {
@@ -189,17 +193,22 @@ private:
 
 template<typename T>
 concept Packet =
-    std::same_as<T, packet<typename T::packet_type, typename T::protocol_type>>;
+    std::same_as<std::decay_t<T>, packet<typename std::decay_t<T>::packet_type,
+                                         typename std::decay_t<T>::protocol_type>>;
 template<typename TPacket, typename TAction>
 concept Compatible_packet_with_action =
     Packet<TPacket> && Derived_from_action<TAction>
-    && std::same_as<typename TAction::packet_type, typename TPacket::packet_type>;
+    && std::same_as<typename std::decay_t<TAction>::packet_type,
+                    typename std::decay_t<TPacket>::packet_type>;
 
 using debug_packet = packet<typename debug_extention::packet_type,
                             typename debug_extention::protocol_type>;
 
 template<Derived_from_action Action, ipv _v>
 class net_stream_udp;
+
+template<typename T>
+concept Net_stream_udp = std::same_as<T, net_stream_udp<typename T::action_type, T::v>>;
 
 template<Derived_from_action Action, ipv _v>
 class net_stream_udp {
@@ -378,8 +387,9 @@ void net_stream_udp<Action, v>::send_to(TPacket &pckt, address_type addr) {
 
     system::error_code ec;
 
-    TPacket::prepare(pckt, this->get_address_bytes(addr),
-                     std::bind(&Action::init_packet, &this->act, std::placeholders::_1));
+    std::decay_t<TPacket>::prepare(
+        pckt, this->get_address_bytes(addr),
+        std::bind(&Action::init_packet, &this->act, std::placeholders::_1));
     socket.send_to(asio::const_buffer(pckt.data(), pckt.size()), {addr, this->port}, 0,
                    ec);
 
@@ -399,7 +409,7 @@ void net_stream_udp<Action, v>::receive_from(TPacket &pckt) {
 
     this->handle_error(ec);
 
-    TPacket::handle(
+    std::decay_t<TPacket>::handle(
         std::move(pckt), this->get_address_bytes(sender_endpoint.address()),
         std::bind(&Action::process_packet, &this->act, std::placeholders::_1));
 }
@@ -410,8 +420,9 @@ void net_stream_udp<Action, v>::async_send_to(TPacket &pckt, address_type addr) 
     thread_local asio::ip::udp::endpoint receiver_endpoint;
 
     receiver_endpoint = {addr, this->port};
-    TPacket::prepare(pckt, this->get_address_bytes(receiver_endpoint.address()),
-                     std::bind(&Action::init_packet, &this->act, std::placeholders::_1));
+    std::decay_t<TPacket>::prepare(
+        pckt, this->get_address_bytes(receiver_endpoint.address()),
+        std::bind(&Action::init_packet, &this->act, std::placeholders::_1));
 
     this->template register_async_socket_operation<async_socket_operation::send_to, 0>(
         []() {}, asio::const_buffer{pckt.data(), pckt.size()}, receiver_endpoint);
@@ -423,7 +434,7 @@ void net_stream_udp<Action, v>::async_receive_from(TPacket &pckt) {
     thread_local asio::ip::udp::endpoint sender_endpoint;
 
     thread_local const auto handle_receive = [this, &pckt]() {
-        TPacket::handle(
+        std::decay_t<TPacket>::handle(
             std::move(pckt), this->get_address_bytes(sender_endpoint.address()),
             std::bind(&Action::process_packet, &this->act, std::placeholders::_1));
     };

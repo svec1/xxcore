@@ -95,7 +95,7 @@ xxcore_service::xxcore_service(address_type &&_addr, asio::ip::port_type _port)
 }
 
 void xxcore_service::run() {
-    essu_session<v, packet_type, audio_action> stream({}, addr, port);
+    essu_session<v, packet_type, audio_action> stream(addr, port);
 
     stream.establish_connection(config.pattern, config.role, {},
                                 {config.local_private_key, config.local_public_key},

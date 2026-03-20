@@ -63,15 +63,8 @@ concept Buffer =
 
 template<Buffer TReturn, typename TSource>
     requires(TReturn{}.size() >= sizeof(TSource))
-constexpr TReturn to_buffer(TSource el) {
-    TReturn buffer_tmp{};
-
-    auto begin = reinterpret_cast<rbyte *>(&el);
-    auto end   = reinterpret_cast<rbyte *>(&el) + sizeof(TSource);
-
-    std::copy(begin, end, reinterpret_cast<rbyte *>(buffer_tmp.data()));
-
-    return buffer_tmp;
+constexpr TReturn to_buffer(TSource &el) {
+    return *reinterpret_cast<std::remove_reference_t<TReturn> *>(&el);
 }
 
 template<Buffer TReturn, Buffer TSource>
@@ -101,9 +94,11 @@ constexpr buffer_type<char, std::decay_t<TSource>{}.size()
         it = std::format_to_n(it, 1, "\0").out;
 
     for (auto ch : buffer) {
-        if (ch >> 4)
-            it = std::format_to_n(it, 1, "{:x}", ch >> 4).out;
-        it = std::format_to_n(it, 1, "{:x}", noheap::ubyte(ch << 4) >> 4).out;
+        it = std::format_to_n(it, 1, "{:x}", static_cast<noheap::ubyte>(ch) >> 4).out;
+        it = std::format_to_n(
+                 it, 1, "{:x}",
+                 static_cast<noheap::ubyte>(static_cast<noheap::ubyte>(ch) << 4) >> 4)
+                 .out;
     }
 
     return buffer_tmp;

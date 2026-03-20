@@ -12,14 +12,14 @@ public:
     template<std::size_t size>
     using buffer_type = noheap::buffer_bytes_type<size, noheap::ubyte>;
 
-    using buffer_iv_type = buffer_type<8>;
+    using buffer_iv_type  = buffer_type<8>;
+    using buffer_key_type = buffer_type<32>;
 
 public:
     constexpr crypto() = default;
 
 public:
-    template<noheap::Buffer_bytes TKey>
-    static void chacha_encrypt(std::span<noheap::ubyte> buffer, TKey &&key,
+    static void chacha_encrypt(std::span<noheap::ubyte> buffer, buffer_key_type key,
                                buffer_iv_type iv, std::uint64_t counter);
 
 public:
@@ -29,12 +29,11 @@ public:
 private:
     static constexpr log_handler log{buffer_owner};
 };
-template<noheap::Buffer_bytes TKey>
-void crypto::chacha_encrypt(std::span<noheap::ubyte> buffer, TKey &&key,
+void crypto::chacha_encrypt(std::span<noheap::ubyte> buffer, buffer_key_type key,
                             buffer_iv_type iv, std::uint64_t counter) {
     chacha_ctx chacha_ctx{};
     chacha_keysetup(&chacha_ctx, reinterpret_cast<const noheap::ubyte *>(key.data()),
-                    key.size() * 8);
+                    256);
     chacha_ivsetup(&chacha_ctx, iv.data(),
                    reinterpret_cast<const noheap::ubyte *>(&counter));
     chacha_encrypt_bytes(&chacha_ctx, buffer.data(), buffer.data(), buffer.size());

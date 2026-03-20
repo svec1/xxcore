@@ -41,6 +41,7 @@ enum class ecdh_type : std::uint16_t {
 
 enum class hash_type : std::uint16_t {
     UNKNOWN = 0,
+    BLAKE2s = NOISE_HASH_BLAKE2s,
     BLAKE2b = NOISE_HASH_BLAKE2b,
 };
 
@@ -441,7 +442,7 @@ noise_context<_ecdh>::hash_state::hash_state(hash_state &&handle) {
     this->operator=(std::move(handle));
 }
 template<ecdh_type _ecdh>
-noise_context<_ecdh>::hash_state::hash_state &
+noise_context<_ecdh>::hash_state &
     noise_context<_ecdh>::hash_state::operator=(hash_state &&handle) {
     std::swap(this->hashstate, handle.hashstate);
     return *this;

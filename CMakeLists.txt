@@ -23,7 +23,7 @@ add_subdirectory(${OPUS_DIR})
 include(cmake/noise_c_target.cmake)
 add_dependencies(${XXCORE} ${NOISE_C})
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -g")
 
 target_include_directories(
     ${XXCORE}
