@@ -13,7 +13,6 @@ static constexpr std::size_t packet_size                     = 340;
 static constexpr std::size_t batch_packets_count             = 4;
 static constexpr std::size_t batch_max_payload_packets_count = 2;
 static constexpr std::size_t batch_old_packets_count         = 2;
-static constexpr std::size_t max_node_connection             = 4;
 static constexpr std::size_t max_node_buffered_packets       = 255;
 
 struct transport_data_config {
@@ -125,6 +124,9 @@ struct transport_protocol_type
 
 public:
     struct node_info_type {
+        friend class transport_protocol_type<config>;
+
+    private:
         enum class status_type : std::size_t {
             UNCONNECTED = 0,
             HS1,
@@ -142,21 +144,26 @@ public:
             receiver_packet_number = node_info.receiver_packet_number;
             payload_cipher_state_p = node_info.payload_cipher_state_p;
             header_obfs_key_p      = node_info.header_obfs_key_p;
+
+            last_packet_accepted_ms.store(node_info.last_packet_accepted_ms.load());
+            last_packet_accepted.store(node_info.last_packet_accepted.load());
+
             return *this;
         }
 
-    public:
-        status_type   status;
-        std::uint16_t sender_packet_number;
-        std::uint16_t receiver_packet_number;
-        std::size_t   last_packet_accepted_ms;
+    private:
+        status_type              status;
+        std::uint16_t            sender_packet_number;
+        std::uint16_t            receiver_packet_number;
+        std::atomic<std::size_t> last_packet_accepted_ms;
+        std::atomic<bool>        last_packet_accepted;
 
         typename noise_context_type::cipher_state *payload_cipher_state_p;
         const noise_context_type::dh_key_type     *header_obfs_key_p;
     };
     using node_info_s_type =
         noheap::monotonic_array<std::pair<network::buffer_address_type, node_info_type>,
-                                max_node_connection>;
+                                network::max_count_addresses>;
 
 public:
     constexpr void
@@ -265,7 +272,8 @@ public:
             auto &node_info =
                 const_cast<decltype(node_info_it->second) &>(node_info_it->second);
 
-            node_info.last_packet_accepted_ms = get_now_ms();
+            node_info.last_packet_accepted_ms.store(get_now_ms());
+            node_info.last_packet_accepted.store(true);
 
             for (std::size_t i = 0; i < pckt->packets.size(); ++i) {
                 auto &packet_tmp = pckt->packets[i];
@@ -345,48 +353,61 @@ public:
     };
 
 public:
-    void create_node_info(network::buffer_address_type               addr,
-                          typename noise_context_type::cipher_state &payload_cipher_state,
-                          const noise_context_type::dh_key_type &header_obfs_key) const {
+    node_info_s_type::const_iterator
+        create_node_info(network::buffer_address_type               addr,
+                         typename noise_context_type::cipher_state &payload_cipher_state,
+                         const noise_context_type::dh_key_type &header_obfs_key) const {
         auto node_info_it = find_node_info(addr);
         if (node_info_it == node_info_s.end()) {
-            if (node_info_s.size() == max_node_connection)
+            if (node_info_s.size() == network::max_count_addresses)
                 throw noheap::runtime_error(
-                    "The node connection limit has been reached.");
+                    this->buffer_owner, "The node connection limit has been reached.");
 
             const_cast<node_info_s_type &>(node_info_s)
                 .push_back(typename node_info_s_type::value_type{std::move(addr),
                                                                  node_info_type{}});
         }
 
-        node_info_it->second.payload_cipher_state_p  = &payload_cipher_state;
-        node_info_it->second.header_obfs_key_p       = &header_obfs_key;
-        node_info_it->second.last_packet_accepted_ms = get_now_ms();
+        node_info_it->second.payload_cipher_state_p = &payload_cipher_state;
+        node_info_it->second.header_obfs_key_p      = &header_obfs_key;
+        node_info_it->second.last_packet_accepted_ms.store(get_now_ms());
+
+        return node_info_it;
     }
-    void set_starting_handshake(network::buffer_address_type addr) const {
-        auto node_info_it = find_node_info(addr);
-        if (node_info_it == node_info_s.end())
-            throw noheap::runtime_error("Not found node info.");
+    void set_starting_handshake(node_info_s_type::const_iterator it) const {
+        if (it == node_info_s.end())
+            throw noheap::runtime_error(this->buffer_owner, "Iterator is null.");
 
-        node_info_it->second.status = node_info_type::status_type::HS1;
+        const_cast<node_info_type &>(it->second).status =
+            node_info_type::status_type::HS1;
     }
-    void set_packet_number(network::buffer_address_type addr,
-                           std::size_t                  packet_number) const {
-        auto node_info_it = find_node_info(addr);
-        if (node_info_it == node_info_s.end())
-            throw noheap::runtime_error("Not found node info.");
+    void set_packet_number(node_info_s_type::const_iterator it,
+                           std::size_t                      packet_number) const {
+        if (it == node_info_s.end())
+            throw noheap::runtime_error(this->buffer_owner, "Iterator is null.");
 
-        node_info_it->second.sender_packet_number   = packet_number;
-        node_info_it->second.receiver_packet_number = packet_number;
+        auto node_info = const_cast<node_info_type &>(it->second);
+
+        node_info.sender_packet_number   = packet_number;
+        node_info.receiver_packet_number = packet_number;
     }
 
-    bool timeout_reached(network::buffer_address_type addr) const {
-        auto node_info_it = find_node_info(addr);
-        if (node_info_it == node_info_s.end())
-            throw noheap::runtime_error("Not found node info.");
+    bool timeout_reached(node_info_s_type::const_iterator it) const {
+        if (it == node_info_s.end())
+            throw noheap::runtime_error(this->buffer_owner, "Iterator is null.");
 
-        return get_now_ms() - node_info_it->second.last_packet_accepted_ms
+        return get_now_ms() - it->second.last_packet_accepted_ms.load()
                >= termination_timeout_ms;
+    }
+    bool was_accepted(node_info_s_type::const_iterator it) const {
+        if (it == node_info_s.end())
+            throw noheap::runtime_error(this->buffer_owner, "Iterator is null.");
+
+        bool last_packet_accepted_tmp = it->second.last_packet_accepted.load();
+        if (last_packet_accepted_tmp)
+            const_cast<node_info_type &>(it->second).last_packet_accepted.store(false);
+
+        return last_packet_accepted_tmp;
     }
 
 private:

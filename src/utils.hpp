@@ -320,6 +320,13 @@ public:
 
 public:
     constexpr monotonic_array() = default;
+    monotonic_array(std::initializer_list<T> list) {
+        if (list.size() >= monotonic_array::buffer_size)
+            throw runtime_error("Buffer overflow.");
+
+        for (const auto &it : list)
+            this->push_back(it);
+    }
     monotonic_array(const monotonic_array &array) { this->operator=(array); }
     monotonic_array(monotonic_array &&array) { this->operator=(std::move(array)); }
     monotonic_array &operator=(const monotonic_array &array) {
@@ -416,6 +423,10 @@ template<typename T, std::size_t _buffer_size>
 class ring_buffer : public basic_array<T, _buffer_size> {
 public:
     constexpr ring_buffer() = default;
+    ring_buffer(std::initializer_list<T> list) {
+        for (const auto &it : list)
+            this->push(it);
+    }
 
 public:
     template<typename _T>

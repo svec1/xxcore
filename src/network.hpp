@@ -11,8 +11,10 @@ using namespace boost;
 
 enum class ipv { v4 = 0, v6 };
 
-static constexpr ipv IPV4 = ipv::v4;
-static constexpr ipv IPV6 = ipv::v6;
+static constexpr ipv         IPV4                 = ipv::v4;
+static constexpr ipv         IPV6                 = ipv::v6;
+static constexpr std::size_t max_count_addresses  = 4;
+static constexpr std::size_t max_buffered_packets = 16;
 
 static constexpr std::size_t max_buffer_address_size =
     asio::ip::address_v6::bytes_type{}.size();
@@ -165,14 +167,14 @@ public:
 
 template<Packet_native_t TPacket_internal, Derived_from_protocol_native_t TProtocol>
     requires std::same_as<TPacket_internal, typename TProtocol::packet_type>
-class packet final : public TPacket_internal {
+class wrapper_packet final : public TPacket_internal {
 public:
     using packet_type   = TPacket_internal;
     using protocol_type = TProtocol;
 
 public:
-    packet() = default;
-    packet(packet_type &&pckg) : packet_type(pckg) {}
+    wrapper_packet() = default;
+    wrapper_packet(packet_type &&pckt) : packet_type(pckt) {}
 
 public:
     static constexpr void prepare(packet_type &pckt, buffer_address_type addr,
@@ -192,17 +194,18 @@ private:
 };
 
 template<typename T>
-concept Packet =
-    std::same_as<std::decay_t<T>, packet<typename std::decay_t<T>::packet_type,
-                                         typename std::decay_t<T>::protocol_type>>;
+concept Wrapper_packet =
+    std::same_as<std::decay_t<T>,
+                 wrapper_packet<typename std::decay_t<T>::packet_type,
+                                typename std::decay_t<T>::protocol_type>>;
 template<typename TPacket, typename TAction>
-concept Compatible_packet_with_action =
-    Packet<TPacket> && Derived_from_action<TAction>
+concept Compatible_wrapper_packet_with_action =
+    Wrapper_packet<TPacket> && Derived_from_action<TAction>
     && std::same_as<typename std::decay_t<TAction>::packet_type,
                     typename std::decay_t<TPacket>::packet_type>;
 
-using debug_packet = packet<typename debug_extention::packet_type,
-                            typename debug_extention::protocol_type>;
+using debug_packet = wrapper_packet<typename debug_extention::packet_type,
+                                    typename debug_extention::protocol_type>;
 
 template<Derived_from_action Action, ipv _v>
 class net_stream_udp;
@@ -267,15 +270,15 @@ public:
     std::size_t io_context_run();
 
 public:
-    template<Compatible_packet_with_action<Action> TPacket>
-    void send_to(TPacket &pckt, address_type addr);
-    template<Compatible_packet_with_action<Action> TPacket>
-    void receive_from(TPacket &pckt);
+    template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
+    void send_to(TWrapper_packet &pckt, address_type addr);
+    template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
+    void receive_from(TWrapper_packet &pckt);
 
-    template<Compatible_packet_with_action<Action> TPacket>
-    void async_send_to(TPacket &pckt, address_type addr);
-    template<Compatible_packet_with_action<Action> TPacket>
-    void async_receive_from(TPacket &pckt);
+    template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
+    void async_send_to(TWrapper_packet &pckt, address_type addr);
+    template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
+    void async_receive_from(TWrapper_packet &pckt, address_type addr);
 
 private:
     template<async_socket_operation async_op, std::size_t delay, typename Func,
@@ -284,7 +287,9 @@ private:
                                          endpoint_type &endpoint);
 
 public:
-    static buffer_address_type get_address_bytes(asio::ip::address addr);
+    static buffer_address_type get_address_bytes(address_type addr);
+    static address_type        get_address_object(buffer_address_type addr);
+    static address_type        get_address_object(asio::ip::address addr);
 
 private:
     static void init_socket(net_stream_udp<Action, v> &stream, port_type port);
@@ -380,14 +385,14 @@ void net_stream_udp<Action, v>::register_async_socket_operation(Func         &&f
         static_assert(false, "Unknown async operation.");
 }
 template<Derived_from_action Action, ipv v>
-template<Compatible_packet_with_action<Action> TPacket>
-void net_stream_udp<Action, v>::send_to(TPacket &pckt, address_type addr) {
+template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
+void net_stream_udp<Action, v>::send_to(TWrapper_packet &pckt, address_type addr) {
     if (!running)
         return;
 
     system::error_code ec;
 
-    std::decay_t<TPacket>::prepare(
+    std::decay_t<TWrapper_packet>::prepare(
         pckt, this->get_address_bytes(addr),
         std::bind(&Action::init_packet, &this->act, std::placeholders::_1));
     socket.send_to(asio::const_buffer(pckt.data(), pckt.size()), {addr, this->port}, 0,
@@ -396,8 +401,8 @@ void net_stream_udp<Action, v>::send_to(TPacket &pckt, address_type addr) {
     this->handle_error(ec);
 }
 template<Derived_from_action Action, ipv v>
-template<Compatible_packet_with_action<Action> TPacket>
-void net_stream_udp<Action, v>::receive_from(TPacket &pckt) {
+template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
+void net_stream_udp<Action, v>::receive_from(TWrapper_packet &pckt) {
     if (!running)
         return;
 
@@ -409,18 +414,18 @@ void net_stream_udp<Action, v>::receive_from(TPacket &pckt) {
 
     this->handle_error(ec);
 
-    std::decay_t<TPacket>::handle(
+    std::decay_t<TWrapper_packet>::handle(
         std::move(pckt), this->get_address_bytes(sender_endpoint.address()),
         std::bind(&Action::process_packet, &this->act, std::placeholders::_1));
 }
 
 template<Derived_from_action Action, ipv v>
-template<Compatible_packet_with_action<Action> TPacket>
-void net_stream_udp<Action, v>::async_send_to(TPacket &pckt, address_type addr) {
+template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
+void net_stream_udp<Action, v>::async_send_to(TWrapper_packet &pckt, address_type addr) {
     thread_local asio::ip::udp::endpoint receiver_endpoint;
 
     receiver_endpoint = {addr, this->port};
-    std::decay_t<TPacket>::prepare(
+    std::decay_t<TWrapper_packet>::prepare(
         pckt, this->get_address_bytes(receiver_endpoint.address()),
         std::bind(&Action::init_packet, &this->act, std::placeholders::_1));
 
@@ -429,15 +434,55 @@ void net_stream_udp<Action, v>::async_send_to(TPacket &pckt, address_type addr) 
 }
 
 template<Derived_from_action Action, ipv v>
-template<Compatible_packet_with_action<Action> TPacket>
-void net_stream_udp<Action, v>::async_receive_from(TPacket &pckt) {
-    thread_local asio::ip::udp::endpoint sender_endpoint;
+template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
+void net_stream_udp<Action, v>::async_receive_from(TWrapper_packet &pckt,
+                                                   address_type     addr) {
+    using packet_type = typename std::decay_t<TWrapper_packet>::packet_type;
 
-    thread_local const auto handle_receive = [this, &pckt]() {
-        std::decay_t<TPacket>::handle(
-            std::move(pckt), this->get_address_bytes(sender_endpoint.address()),
+    static std::mutex m;
+    static noheap::monotonic_array<
+        std::pair<address_type, noheap::ring_buffer<packet_type, max_buffered_packets>>,
+        max_count_addresses>
+        buffer_packets;
+
+    thread_local asio::ip::udp::endpoint sender_endpoint;
+    const auto                           handle_receive = [this, &pckt, addr]() {
+        if (const auto &remote_addr = this->get_address_object(sender_endpoint.address());
+            remote_addr != addr) {
+            {
+                std::lock_guard<std::mutex> lock(m);
+                if (const auto &it =
+                        std::find_if(buffer_packets.begin(), buffer_packets.end(),
+                                     [&remote_addr](const auto &it) {
+                                         return it.first == remote_addr;
+                                     });
+                    it != buffer_packets.end())
+                    it->second.push(*dynamic_cast<packet_type *>(&pckt));
+                else if (buffer_packets.size() < max_count_addresses)
+                    buffer_packets.push_back(
+                        typename decltype(buffer_packets)::value_type{
+                            remote_addr, {*dynamic_cast<packet_type *>(&pckt)}});
+            }
+
+            return;
+        }
+
+        std::decay_t<TWrapper_packet>::handle(
+            std::move(pckt),
+            this->get_address_bytes(this->get_address_object(sender_endpoint.address())),
             std::bind(&Action::process_packet, &this->act, std::placeholders::_1));
     };
+
+    {
+        std::lock_guard<std::mutex> lock(m);
+        if (const auto &it =
+                std::find_if(buffer_packets.begin(), buffer_packets.end(),
+                             [&addr](const auto &it) { return it.first == addr; });
+            it != buffer_packets.end()) {
+            pckt = it->second.pop();
+            return;
+        }
+    }
 
     this->template register_async_socket_operation<async_socket_operation::receive_from,
                                                    0>(
@@ -445,11 +490,21 @@ void net_stream_udp<Action, v>::async_receive_from(TPacket &pckt) {
 }
 
 template<Derived_from_action Action, ipv v>
-buffer_address_type net_stream_udp<Action, v>::get_address_bytes(asio::ip::address addr) {
-    if constexpr (std::same_as<address_type, asio::ip::address_v4>) {
-        return noheap::to_new_buffer<buffer_address_type>(addr.to_v4().to_bytes());
-    } else
-        return addr.to_v6().to_bytes();
+buffer_address_type net_stream_udp<Action, v>::get_address_bytes(address_type addr) {
+    return noheap::to_new_buffer<buffer_address_type>(addr.to_bytes());
+}
+template<Derived_from_action Action, ipv v>
+net_stream_udp<Action, v>::address_type
+    net_stream_udp<Action, v>::get_address_object(buffer_address_type addr) {
+    return address_type(noheap::to_new_buffer<decltype(address_type{}.to_bytes())>(addr));
+}
+template<Derived_from_action Action, ipv v>
+net_stream_udp<Action, v>::address_type
+    net_stream_udp<Action, v>::get_address_object(asio::ip::address addr) {
+    if constexpr (std::same_as<address_type, asio::ip::address_v4>)
+        return addr.to_v4();
+    else
+        return addr.to_v6();
 }
 
 template<Derived_from_action Action, ipv v>

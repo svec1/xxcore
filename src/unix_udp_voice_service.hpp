@@ -21,12 +21,14 @@ public:
     static constexpr std::size_t max_size_config = 4096;
     using buffer_config_type = noheap::buffer_type<char, max_size_config>;
 
-    using packet_type = network::packet<essu::transport_packet_type<transport_config>,
-                                        essu::transport_protocol_type<transport_config>>;
+    using wrapper_packet_type =
+        network::wrapper_packet<essu::transport_packet_type<transport_config>,
+                                essu::transport_protocol_type<transport_config>>;
     using stream_udp_type =
-        network::net_stream_udp<network::decoy_action<packet_type::packet_type>, v>;
+        network::net_stream_udp<network::decoy_action<wrapper_packet_type::packet_type>,
+                                v>;
     using noise_context_type =
-        packet_type::extention_data_type::transport_unit_type::noise_context_type;
+        wrapper_packet_type::extention_data_type::transport_unit_type::noise_context_type;
     using address_type = stream_udp_type::address_type;
     using port_type    = stream_udp_type::port_type;
 
@@ -43,13 +45,13 @@ private:
     };
 
     // For test
-    struct audio_action final : network::action<packet_type::packet_type> {
+    struct audio_action final : network::action<wrapper_packet_type::packet_type> {
         static constexpr std::size_t max_stream_size = 32;
 
         using audio_flow_type = audio_flow<max_stream_size>;
 
     public:
-        constexpr void init_packet(packet_type &pckt) override {
+        constexpr void init_packet(audio_action::packet_type &pckt) override {
             audio_flow_type::buffer_type buffer_tmp;
 
             audio.pop(buffer_tmp);
@@ -61,7 +63,7 @@ private:
                 pckt->packets[i].header.flag =
                     decltype(pckt->packets[0].header.flag)::drop;
         }
-        constexpr void process_packet(packet_type &&pckt) override {
+        constexpr void process_packet(audio_action::packet_type &&pckt) override {
             audio_flow_type::buffer_type buffer_tmp;
             std::copy(pckt->packets[0].buffer.begin(), pckt->packets[0].buffer.end(),
                       reinterpret_cast<noheap::rbyte *>(buffer_tmp.begin()));
@@ -95,7 +97,7 @@ xxcore_service::xxcore_service(address_type &&_addr, asio::ip::port_type _port)
 }
 
 void xxcore_service::run() {
-    essu_session<v, packet_type, audio_action> stream(addr, port);
+    essu_session<v, wrapper_packet_type, audio_action> stream(addr, port);
 
     stream.establish_connection(config.pattern, config.role, {},
                                 {config.local_private_key, config.local_public_key},
