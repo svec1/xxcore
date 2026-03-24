@@ -78,9 +78,12 @@ void essu_session<v, TWrapper_Packet, Action>::establish_connection(
     wrapper_packet_type pckt{};
     const auto         &protocol = pckt.get_protocol();
 
-    auto buffer_remote_addr     = udp_stream.get_address_bytes(remote_addr);
-    auto hex_string_remote_addr = noheap::to_hex_string(buffer_remote_addr);
-    decltype(buffer_remote_addr) buffer_own_addr{};
+    auto buffer_remote_addr = udp_stream.get_address_bytes(remote_addr);
+    auto hex_string_remote_addr =
+        noheap::clip_buffer<typename network::buffer_address_v<v>::type{}.size() * 2>(
+            noheap::to_hex_string(buffer_remote_addr));
+    decltype(hex_string_remote_addr) hex_string_own_addr{};
+    decltype(buffer_remote_addr)     buffer_own_addr{};
 
     for (auto it = pckt->packets.begin() + 1; it < pckt->packets.end(); ++it)
         it->header.flag = decltype(it->header.flag)::drop;
@@ -91,6 +94,7 @@ void essu_session<v, TWrapper_Packet, Action>::establish_connection(
     // Resolves each other's ip
     try {
         net_stream_decoy resolves_ip_udp_stream(udp_stream.get_port());
+
         if (role == noise::noise_role::INITIATOR) {
             std::copy(reinterpret_cast<noheap::rbyte *>(buffer_remote_addr.begin()),
                       reinterpret_cast<noheap::rbyte *>(buffer_remote_addr.end()),
@@ -112,6 +116,11 @@ void essu_session<v, TWrapper_Packet, Action>::establish_connection(
                       pckt->packets[0].buffer.begin());
             send(resolves_ip_udp_stream, pckt, node_it);
         }
+
+        hex_string_own_addr =
+            noheap::clip_buffer<typename network::buffer_address_v<v>::type{}.size() * 2>(
+                noheap::to_hex_string(buffer_own_addr));
+        udp_stream = std::move(resolves_ip_udp_stream);
     } catch (noheap::runtime_error &excp) {
         throw noheap::runtime_error(buffer_owner, "{}: Failed to resolve ip. {}",
                                     std::string_view(hex_string_remote_addr.data(),
@@ -149,8 +158,8 @@ void essu_session<v, TWrapper_Packet, Action>::establish_connection(
     } catch (noheap::runtime_error &excp) {
         throw noheap::runtime_error(buffer_owner,
                                     "{}: Failed to establish connection. {}",
-                                    std::string_view(hex_string_remote_addr.data(),
-                                                     hex_string_remote_addr.size()),
+                                    std::string_view(hex_string_remote_addr.begin(),
+                                                     hex_string_remote_addr.end()),
                                     excp.what());
     }
 }
@@ -158,11 +167,6 @@ template<network::ipv v, network::Wrapper_packet TWrapper_packet,
          network::Derived_from_action Action>
 void essu_session<v, TWrapper_packet, Action>::run_stream_session() {
     // TODO
-    std::future<void> payload_handler = std::async(std::launch::async, [&] {
-        wrapper_packet_type pckt_for_receiving{}, pckt_for_sending{};
-
-        udp_stream.io_context_run();
-    });
 }
 template<network::ipv v, network::Wrapper_packet TWrapper_packet,
          network::Derived_from_action Action>
@@ -179,22 +183,19 @@ template<network::Net_stream_udp TStream>
 void essu_session<v, TWrapper_packet, Action>::receive(
     TStream &udp_stream, wrapper_packet_type &pckt,
     wrapper_packet_type::protocol_type::node_info_s_type::const_iterator node_it) {
-    while (!pckt.get_protocol().was_accepted(node_it)) {
-        future_wrapper f([&]() {
-            udp_stream.template async_receive_from<decltype(pckt)>(
-                pckt, TStream::get_address_object(node_it->first));
-            udp_stream.io_context_run();
-        });
+    future_wrapper f([&]() {
+        udp_stream.template async_receive_from<decltype(pckt)>(
+            pckt, TStream::get_address_object(node_it->first));
+        udp_stream.run();
+    });
 
-        // Waits to receive packet
-        if (!f.is_completed(essu::termination_timeout_ms)
-            || pckt.get_protocol().timeout_reached(node_it)) {
-            udp_stream.socket_cancel();
-            throw noheap::runtime_error(buffer_owner, "Timeout has been reached.");
-        }
-
-        f.get();
+    // Waits to receive packet
+    if (!f.is_completed(TWrapper_packet::protocol_type::timeout_ms)) {
+        udp_stream.cancel();
+        throw noheap::runtime_error("Timeout has been reached.");
     }
+
+    f.get();
 }
 
 #endif
