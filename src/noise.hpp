@@ -9,8 +9,6 @@ namespace noise {
 
 enum class noise_pattern : std::uint16_t {
     UNKNOWN = 0,
-    XX      = NOISE_PATTERN_XK,
-    XX_HFS  = NOISE_PATTERN_XK_HFS, // with KEM
     XK      = NOISE_PATTERN_XK,
     XK_HFS  = NOISE_PATTERN_XK_HFS, // with KEM
 };
@@ -46,11 +44,7 @@ enum class hash_type : std::uint16_t {
 };
 
 noise_pattern get_noise_pattern(std::string_view pattern_string) {
-    if (pattern_string == "XX")
-        return noise_pattern::XX;
-    else if (pattern_string == "XX_HFS")
-        return noise_pattern::XX_HFS;
-    else if (pattern_string == "XK")
+    if (pattern_string == "XK")
         return noise_pattern::XK;
     else if (pattern_string == "XK_HFS")
         return noise_pattern::XK_HFS;
@@ -63,6 +57,16 @@ noise_role get_noise_role(std::string_view role_string) {
     else if (role_string == "RESPONDER")
         return noise_role::RESPONDER;
     return noise_role::UNKNOWN;
+}
+template<noise_pattern pattern, ecdh_type ecdh>
+consteval std::size_t pattern_ecdh_is_compatible() {
+    if constexpr ((pattern == noise_pattern::XK
+                   && (ecdh == ecdh_type::x25519 || ecdh == ecdh_type::x448))
+                  || (pattern == noise_pattern::XK_HFS
+                      && (ecdh == ecdh_type::x25519_hybrid_kyber1024
+                          || ecdh == ecdh_type::x448_hybrid_kyber1024)))
+        return true;
+    return false;
 }
 
 template<ecdh_type ecdh>
@@ -669,7 +673,7 @@ noise_context<_ecdh>::keypair_type noise_context<_ecdh>::generate_keypair() {
     keypair_type         kp;
     noise_context<_ecdh> context_tmp;
 
-    context_tmp.init(noise_pattern::XX, noise_role::INITIATOR);
+    context_tmp.init(noise_pattern::XK, noise_role::INITIATOR);
     NoiseDHState *dh =
         noise_handshakestate_get_local_keypair_dh(context_tmp.handshakestate);
 

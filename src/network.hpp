@@ -11,8 +11,9 @@ using namespace boost;
 
 enum class ipv { v4 = 0, v6 };
 
-static constexpr ipv         IPV4                 = ipv::v4;
-static constexpr ipv         IPV6                 = ipv::v6;
+static constexpr ipv IPV4 = ipv::v4;
+static constexpr ipv IPV6 = ipv::v6;
+
 static constexpr std::size_t max_count_addresses  = 4;
 static constexpr std::size_t max_buffered_packets = 16;
 
@@ -343,7 +344,7 @@ net_stream_udp<Action, v>::net_stream_udp(port_type _port)
 template<Derived_from_action Action, ipv v>
 template<typename TOther>
 net_stream_udp<Action, v>::net_stream_udp(TOther &&stream)
-    : io(stream.io), port(stream.port), running(stream.running), socket(stream.socket) {
+    : port(stream.port), running(stream.running), socket(stream.socket) {
 }
 template<Derived_from_action Action, ipv v>
 net_stream_udp<Action, v>::~net_stream_udp() {

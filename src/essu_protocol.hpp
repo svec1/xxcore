@@ -7,21 +7,39 @@
 #include "utils.hpp"
 
 namespace essu {
-static constexpr std::size_t packet_size                     = 340;
+
+static constexpr std::size_t packet_size       = 340;
+static constexpr std::size_t header_data_size  = 8;
+static constexpr std::size_t payload_data_size = packet_size - header_data_size;
+
 static constexpr std::size_t batch_packets_count             = 4;
 static constexpr std::size_t batch_max_payload_packets_count = 2;
 static constexpr std::size_t batch_old_packets_count         = 2;
 static constexpr std::size_t max_node_buffered_packets       = 255;
 
-struct transport_data_config {
-    noise::ecdh_type ecdh;
-    std::size_t      payload_data_size;
+template<noise::noise_pattern _pattern, noise::ecdh_type _ecdh,
+         std::size_t _payload_data_size>
+struct transport_data_config_type {
+    static constexpr noise::noise_pattern pattern           = _pattern;
+    static constexpr noise::ecdh_type     ecdh              = _ecdh;
+    static constexpr std::size_t          payload_data_size = _payload_data_size;
+
+private:
+    static_assert(noise::pattern_ecdh_is_compatible<pattern, ecdh>(),
+                  "Noise pattern and ecdh type is not compatible.");
 };
 
+template<typename T>
+concept Transport_data_config_type =
+    std::same_as<std::decay_t<T>, transport_data_config_type<
+                                      std::decay_t<T>::pattern, std::decay_t<T>::ecdh,
+                                      std::decay_t<T>::payload_data_size>>;
+
 // Packet
-template<transport_data_config config>
+template<Transport_data_config_type _config_type>
 struct transport_data_type {
-    using noise_context_type = noise::noise_context<config.ecdh>;
+    using config_type        = _config_type;
+    using noise_context_type = noise::noise_context<config_type::ecdh>;
 
 public:
     enum class payload_type : noheap::ubyte {
@@ -49,47 +67,50 @@ public:
     };
 
 public:
-    static constexpr transport_data_config get_config() { return config; }
-    static constexpr std::size_t           get_buffer_size() {
-        return packet_size - sizeof(header_data_type);
+    static constexpr std::size_t get_buffer_size() { return payload_data_size; }
+    static constexpr std::size_t get_buffer_size_without_mac() {
+        return get_buffer_size() - noise_context_type::mac_size;
     }
     static constexpr std::size_t get_session_request_size() {
-        if constexpr (config.ecdh == noise::ecdh_type::x25519
-                      || config.ecdh == noise::ecdh_type::x448)
-            return noise::get_dh_key_size<config.ecdh>();
-        else if constexpr (config.ecdh == noise::ecdh_type::x25519_hybrid_kyber1024
-                           || config.ecdh == noise::ecdh_type::x448_hybrid_kyber1024)
-            return noise::get_dh_key_size<config.ecdh>()
-                   + noise::get_kem_key_size<config.ecdh>();
+        if constexpr (config_type::ecdh == noise::ecdh_type::x25519
+                      || config_type::ecdh == noise::ecdh_type::x448)
+            return noise::get_dh_key_size<config_type::ecdh>();
+        else if constexpr (config_type::ecdh == noise::ecdh_type::x25519_hybrid_kyber1024
+                           || config_type::ecdh
+                                  == noise::ecdh_type::x448_hybrid_kyber1024)
+            return noise::get_dh_key_size<config_type::ecdh>()
+                   + noise::get_kem_key_size<config_type::ecdh>();
         else
             static_assert(false, "The passed ECDH type is not supported.");
     }
     static constexpr std::size_t get_session_created_size() {
-        if constexpr (config.ecdh == noise::ecdh_type::x25519
-                      || config.ecdh == noise::ecdh_type::x448)
-            return noise::get_dh_key_size<config.ecdh>() + noise_context_type::mac_size;
-        else if constexpr (config.ecdh == noise::ecdh_type::x25519_hybrid_kyber1024
-                           || config.ecdh == noise::ecdh_type::x448_hybrid_kyber1024)
-            return noise::get_dh_key_size<config.ecdh>()
-                   + noise::get_kem_cipher_text_size<config.ecdh>();
+        if constexpr (config_type::ecdh == noise::ecdh_type::x25519
+                      || config_type::ecdh == noise::ecdh_type::x448)
+            return noise::get_dh_key_size<config_type::ecdh>()
+                   + noise_context_type::mac_size;
+        else if constexpr (config_type::ecdh == noise::ecdh_type::x25519_hybrid_kyber1024
+                           || config_type::ecdh
+                                  == noise::ecdh_type::x448_hybrid_kyber1024)
+            return noise::get_dh_key_size<config_type::ecdh>()
+                   + noise::get_kem_cipher_text_size<config_type::ecdh>()
+                   + noise_context_type::mac_size;
         else
             static_assert(false, "The passed ECDH type is not supported.");
     }
     static constexpr std::size_t get_session_confirmed_size() {
-        return noise::get_dh_key_size<config.ecdh>() + noise_context_type::mac_size;
+        return noise::get_dh_key_size<config_type::ecdh>() + noise_context_type::mac_size;
     }
     static constexpr std::size_t get_payload_data_size() {
-        return config.payload_data_size;
+        return config_type::payload_data_size;
     }
-    static constexpr std::size_t get_payload_data_with_mac_size() {
-        return config.payload_data_size + noise_context_type::mac_size;
-    }
-    static constexpr std::size_t get_max_payload_data_size() {
-        return packet_size - sizeof(header_data_type) - noise_context_type::mac_size;
+    static constexpr std::size_t get_payload_data_size_with_mac() {
+        return config_type::payload_data_size + noise_context_type::mac_size;
     }
 
 public:
-    static_assert(get_payload_data_with_mac_size() <= get_buffer_size(),
+    static_assert(sizeof(header_data_type) == header_data_size,
+                  "Header size is invalid.");
+    static_assert(get_payload_data_size_with_mac() <= get_buffer_size(),
                   "Unexpected size of payload data.");
 
 public:
@@ -98,25 +119,29 @@ public:
     noheap::buffer_bytes_type<get_buffer_size(), noheap::rbyte> buffer{};
 };
 
+// The type that helps to determine the buffer size without mac
+using decoy_transport_data_type = transport_data_type<
+    transport_data_config_type<noise::noise_pattern::XK, noise::ecdh_type::x25519, 0>>;
+
 // Batch
-template<transport_data_config _config>
+template<Transport_data_config_type _config_type>
 struct extention_payload_data_type {
-    using transport_unit_type = transport_data_type<_config>;
+    using transport_unit_type = transport_data_type<_config_type>;
 
 public:
     noheap::buffer_type<transport_unit_type, batch_packets_count> packets;
 };
 
-template<transport_data_config config>
+template<Transport_data_config_type _config_type>
 using transport_packet_type =
-    network::packet_native_type<extention_payload_data_type<config>>;
+    network::packet_native_type<extention_payload_data_type<_config_type>>;
 
-template<transport_data_config config>
+template<Transport_data_config_type _config_type>
 struct transport_protocol_type
-    : public network::protocol_native_type<transport_packet_type<config>,
+    : public network::protocol_native_type<transport_packet_type<_config_type>,
                                            noheap::log_impl::create_owner(
                                                "ESSU_PROTOCOL")> {
-    using packet_type         = transport_protocol_type<config>::packet_type;
+    using packet_type         = transport_protocol_type<_config_type>::packet_type;
     using transport_unit_type = packet_type::extention_data_type::transport_unit_type;
     using noise_context_type  = transport_unit_type::noise_context_type;
 
@@ -124,7 +149,7 @@ struct transport_protocol_type
 
 public:
     struct node_info_type {
-        friend class transport_protocol_type<config>;
+        friend class transport_protocol_type<_config_type>;
 
     private:
         enum class status_type : std::size_t {
@@ -196,7 +221,7 @@ public:
                         payload_data_size = packet_tmp.get_session_confirmed_size();
                     else if (packet_tmp.header.type
                              == transport_unit_type::payload_type::data)
-                        payload_data_size = packet_tmp.get_payload_data_with_mac_size();
+                        payload_data_size = packet_tmp.get_payload_data_size_with_mac();
 
                     // Dummy packet
                     if (packet_tmp.header.flag == transport_unit_type::flag_type::drop)
@@ -219,7 +244,7 @@ public:
                         throw noheap::runtime_error("Cipher state for payloads is null.");
                     node_info.payload_cipher_state_p->input_buffer.set(
                         {packet_tmp.buffer.data(),
-                         packet_tmp.get_payload_data_with_mac_size()},
+                         packet_tmp.get_payload_data_size_with_mac()},
                         packet_tmp.get_payload_data_size());
                     node_info.payload_cipher_state_p->set_nonce(
                         packet_tmp.header.packet_number);
@@ -278,7 +303,7 @@ public:
                      < node_info.receiver_packet_number
                            + sizeof(packet_tmp.header.packet_number) * 8;
                      ++possible_packet_number) {
-                    decltype(auto) test_packet = packet_tmp;
+                    transport_unit_type test_packet = packet_tmp;
 
                     // Generates header obfuscation key based on the packet_number
                     noise::buffer_type<sizeof(test_packet.header)> obfs_key_tmp{};
@@ -297,7 +322,7 @@ public:
                                    reinterpret_cast<noheap::rbyte *>(&test_packet.header),
                                    std::bit_xor{});
                     if (test_packet.header.packet_number == possible_packet_number) {
-                        packet_tmp  = test_packet;
+                        packet_tmp  = std::move(test_packet);
                         was_matched = true;
                         break;
                     }
@@ -316,7 +341,7 @@ public:
                     // Decrypts payload data
                     node_info.payload_cipher_state_p->output_buffer.set(
                         {packet_tmp.buffer.data(), packet_tmp.buffer.size()},
-                        packet_tmp.get_payload_data_with_mac_size());
+                        packet_tmp.get_payload_data_size_with_mac());
                     node_info.payload_cipher_state_p->set_nonce(
                         packet_tmp.header.packet_number);
                     node_info.payload_cipher_state_p->decrypt(
@@ -349,8 +374,8 @@ public:
         create_node_info(network::buffer_address_type               addr,
                          typename noise_context_type::cipher_state &payload_cipher_state,
                          const noise_context_type::dh_key_type &header_obfs_key) const {
-        auto node_info_it = find_node_info(addr);
-        if (node_info_it == node_info_s.end()) {
+        auto it = find_node_info(addr);
+        if (it == node_info_s.end()) {
             if (node_info_s.size() == network::max_count_addresses)
                 throw noheap::runtime_error(
                     this->buffer_owner, "The node connection limit has been reached.");
@@ -360,10 +385,18 @@ public:
                                                                  node_info_type{}});
         }
 
-        node_info_it->second.payload_cipher_state_p = &payload_cipher_state;
-        node_info_it->second.header_obfs_key_p      = &header_obfs_key;
+        it->second.payload_cipher_state_p = &payload_cipher_state;
+        it->second.header_obfs_key_p      = &header_obfs_key;
 
-        return node_info_it;
+        return it;
+    }
+    node_info_s_type::const_iterator
+        get_node_info(network::buffer_address_type addr) const {
+        auto it = find_node_info(addr);
+        if (it == node_info_s.end())
+            throw noheap::runtime_error(this->buffer_owner, "Not found node info.");
+
+        return it;
     }
     void set_starting_handshake(node_info_s_type::const_iterator it) const {
         if (it == node_info_s.end())
@@ -419,8 +452,9 @@ private:
 };
 
 // Noise handshake action for establishing shared secret key
-template<transport_data_config config>
-struct noise_handshake_action : public network::action<transport_packet_type<config>> {
+template<Transport_data_config_type _config_type>
+struct noise_handshake_action
+    : public network::action<transport_packet_type<_config_type>> {
 public:
     using packet_type             = noise_handshake_action::packet_type;
     using transport_unit_type     = packet_type::extention_data_type::transport_unit_type;
@@ -527,8 +561,7 @@ public:
 
         // Sets noise message
         noise_ctx.get_handshake_buffer().set(
-            {noise_handshake_packet.data(), offset_noise_handshake_packet},
-            payload_data_size);
+            {noise_handshake_packet.data(), payload_data_size}, payload_data_size);
         noise_ctx.get_handshake_message();
         --number_handshake_parts;
     }
@@ -545,13 +578,12 @@ public:
 public:
     void init(
         network::buffer_address_type own_addr, network::buffer_address_type remote_addr,
-        noise::noise_pattern pattern, noise::noise_role role,
-        noise_context_type::prologue_extention_type                   &&ext,
+        noise::noise_role role, noise_context_type::prologue_extention_type &&ext,
         noise_context_type::keypair_type                              &&local_keypair,
         noise_context_type::dh_key_type                               &&remote_public_key,
         std::optional<typename noise_context_type::pre_shared_key_type> pre_shared_key) {
         // Init noise context
-        noise_ctx.init(pattern, role);
+        noise_ctx.init(transport_unit_type::config_type::pattern, role);
         noise_ctx.set_prologue(std::move(ext));
 
         noise_ctx.set_local_keypair(noise_ctx.generate_keypair());
@@ -559,9 +591,9 @@ public:
         if (pre_shared_key.has_value())
             noise_ctx.set_pre_shared_key(std::move(*pre_shared_key));
 
-        generate_ephemeral_obfs_key(own_addr, remote_addr, pattern, role,
-                                    local_keypair.pub, remote_public_key, pre_shared_key,
-                                    ephemeral_obfs_key, ephemeral_header_obfs_key);
+        generate_ephemeral_obfs_key(own_addr, remote_addr, role, local_keypair.pub,
+                                    remote_public_key, pre_shared_key, ephemeral_obfs_key,
+                                    ephemeral_header_obfs_key);
 
         noise_ctx.start();
 
@@ -594,8 +626,7 @@ private:
     }
     static void generate_ephemeral_obfs_key(
         network::buffer_address_type own_addr, network::buffer_address_type remote_addr,
-        noise::noise_pattern pattern, noise::noise_role role,
-        noise_context_type::dh_key_type                                &local_public_key,
+        noise::noise_role role, noise_context_type::dh_key_type &local_public_key,
         noise_context_type::dh_key_type                                &remote_public_key,
         std::optional<typename noise_context_type::pre_shared_key_type> pre_shared_key,
         ephemeral_obfs_key_type         &ephemeral_obfs_key,
@@ -607,12 +638,10 @@ private:
                            public_key.begin(), std::bit_xor{});
         };
 
-        if (pattern == noise::noise_pattern::XK) {
-            if (role == noise::noise_role::INITIATOR)
-                public_key = remote_public_key;
-            else
-                public_key = local_public_key;
-        }
+        if (role == noise::noise_role::INITIATOR)
+            public_key = remote_public_key;
+        else
+            public_key = local_public_key;
 
         // Derives shared key using own and remote addresses
         if (role == noise::noise_role::INITIATOR) {

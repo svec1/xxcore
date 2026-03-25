@@ -14,38 +14,27 @@ using namespace boost;
 
 class xxcore_service {
 public:
-    static constexpr network::ipv                v = network::ipv::v4;
-    static constexpr essu::transport_data_config transport_config{
-        noise::ecdh_type::x25519, 256};
-
     static constexpr std::size_t max_size_config = 4096;
     using buffer_config_type = noheap::buffer_type<char, max_size_config>;
 
-    using wrapper_packet_type =
-        network::wrapper_packet<essu::transport_packet_type<transport_config>,
-                                essu::transport_protocol_type<transport_config>>;
-    using stream_udp_type =
-        network::net_stream_udp<network::decoy_action<wrapper_packet_type::packet_type>,
-                                v>;
-    using noise_context_type =
-        wrapper_packet_type::extention_data_type::transport_unit_type::noise_context_type;
-    using address_type = stream_udp_type::address_type;
-    using port_type    = stream_udp_type::port_type;
+    using noise_context_type = essu_session::noise_context_type;
+    using address_type       = essu_session::net_stream_udp::address_type;
+    using port_type          = essu_session::net_stream_udp::port_type;
 
 private:
     // Config for noise handshake.
     struct config_type {
-        noise::noise_pattern pattern;
-        noise::noise_role    role;
+        noise::noise_role role;
 
-        noise_context_type::dh_key_type local_private_key;
-        noise_context_type::dh_key_type local_public_key;
-        noise_context_type::dh_key_type remote_public_key;
-        noise_context_type::dh_key_type pre_shared_key;
+        essu_session::noise_context_type::dh_key_type local_private_key;
+        essu_session::noise_context_type::dh_key_type local_public_key;
+        essu_session::noise_context_type::dh_key_type remote_public_key;
+        essu_session::noise_context_type::dh_key_type pre_shared_key;
     };
 
     // For test
-    struct audio_action final : network::action<wrapper_packet_type::packet_type> {
+    struct audio_action final
+        : network::action<essu_session::wrapper_packet_type::packet_type> {
         static constexpr std::size_t max_stream_size = 32;
 
         using audio_flow_type = audio_flow<max_stream_size>;
@@ -97,13 +86,12 @@ xxcore_service::xxcore_service(address_type &&_addr, asio::ip::port_type _port)
 }
 
 void xxcore_service::run() {
-    essu_session<v, wrapper_packet_type, audio_action> stream(addr, port);
+    essu_session stream(addr, port);
 
-    stream.establish_connection(config.pattern, config.role, {},
-                                {config.local_private_key, config.local_public_key},
-                                std::move(config.remote_public_key),
-                                config.pre_shared_key);
-    stream.run_stream_session();
+    stream.establish_connection(
+        config.role, {}, {config.local_private_key, config.local_public_key},
+        std::move(config.remote_public_key), config.pre_shared_key);
+    stream.run_stream_session<audio_action>();
 }
 
 void xxcore_service::configurate(buffer_config_type &&buffer) {
@@ -111,7 +99,6 @@ void xxcore_service::configurate(buffer_config_type &&buffer) {
 
     {
         static constexpr std::string_view role_string          = "role";
-        static constexpr std::string_view pattern_string       = "pattern";
         static constexpr std::string_view local_private_string = "local_private_key";
         static constexpr std::string_view local_public_string  = "local_public_key";
         static constexpr std::string_view remote_public_string = "remote_public_key";
@@ -152,16 +139,7 @@ void xxcore_service::configurate(buffer_config_type &&buffer) {
         if (!role_p)
             throw noheap::runtime_error(buffer_owner, "Field of role must be a string.");
 
-        value_p = data.try_at(pattern_string);
-        if (!value_p)
-            throw noheap::runtime_error(buffer_owner, "Field of pattern  not specified.");
-        auto pattern_p = value_p->try_as_string();
-        if (!pattern_p)
-            throw noheap::runtime_error(buffer_owner,
-                                        "Field of pattern must be a string.");
-
-        config.pattern = noise::get_noise_pattern(*pattern_p);
-        config.role    = noise::get_noise_role(*role_p);
+        config.role = noise::get_noise_role(*role_p);
         get_bytes_key(local_private_string, config.local_private_key);
         get_bytes_key(local_public_string, config.local_public_key);
         get_bytes_key(remote_public_string, config.remote_public_key);
