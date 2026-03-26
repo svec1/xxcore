@@ -6,12 +6,14 @@ using namespace boost;
 using dba = stream_audio::default_base_audio;
 
 static constexpr log_handler log_main{{}};
-static constexpr auto        name_config_file = "uuv_config.json";
+static constexpr auto        name_config_file = "xxcore.json";
 
 struct xxcore_config {
     std::string_view             device;
     asio::ip::port_type          port;
     xxcore_service::address_type addr;
+
+    bool keypair_needs_updating = false;
 };
 
 // Parses cmd options
@@ -23,7 +25,7 @@ static void parse_options(xxcore_config &cfg, int argc, char *argv[]) {
         auto            end_it = buffer.begin();
 
         end_it = std::format_to_n(end_it, re::buffer_size,
-                                  "Usage: alsa_tcp_voice [-D sound device] [-h "
+                                  "Usage: xxcore [-d sound device] [-h "
                                   "IP Host] [-p port]\n")
                      .out;
         if (expected_argument == 1)
@@ -58,21 +60,28 @@ static void parse_options(xxcore_config &cfg, int argc, char *argv[]) {
         if (argv[i][0] != '-')
             throw_usage(argv[i]);
 
-        std::string_view option        = argv[i];
-        std::string_view current_value = get_argument(argc, argv, i);
+        std::string_view option = argv[i];
+        std::string_view current_value;
 
         try {
             switch (option[1]) {
-                case 'D': {
-                    cfg.device = current_value;
+                case 'd': {
+                    current_value = get_argument(argc, argv, i);
+                    cfg.device    = current_value;
                     break;
                 }
                 case 'h': {
-                    cfg.addr = asio::ip::make_address_v4(current_value);
+                    current_value = get_argument(argc, argv, i);
+                    cfg.addr      = asio::ip::make_address_v4(current_value);
                     break;
                 }
                 case 'p': {
-                    cfg.port = std::stoi(current_value.data());
+                    current_value = get_argument(argc, argv, i);
+                    cfg.port      = std::stoi(current_value.data());
+                    break;
+                }
+                case 'k': {
+                    cfg.keypair_needs_updating = true;
                     break;
                 }
                 default:
@@ -102,9 +111,18 @@ xxcore_service::buffer_config_type read_config() {
     config.read(buffer_tmp.data(), size);
     return buffer_tmp;
 }
+// Updates json file
+void write_config(xxcore_service::buffer_config_type &buffer) {
+    std::ofstream config(name_config_file);
+    if (!config.is_open())
+        throw noheap::runtime_error("The config file does not exist.");
+
+    config.write(buffer.data(), std::strlen(buffer.data()));
+}
 
 void print_cfg(const xxcore_config &cfg) {
     using ca_type = stream_audio::ca_type;
+    using na_type = xxcore_service::noise_context_type;
 
     log_main.to_console(" -- Sound architecture: {}", dba::arsnd_name);
     log_main.to_console(" -- Sound device: {}", cfg.device);
@@ -116,6 +134,11 @@ void print_cfg(const xxcore_config &cfg) {
     log_main.to_console("    | Channels: {}", dba::cfg.channels);
     log_main.to_console("    | Rate: {} hz", dba::cfg.sample_rate);
     log_main.to_console("    | Sample size: {} bits", dba::cfg.bits_per_sample);
+    log_main.to_console(" -- Network config: ");
+    log_main.to_console("    | Max count of connections: {}",
+                        network::max_count_addresses);
+    log_main.to_console("    | Noise pattern: {}",
+                        std::string_view(na_type::get_name_id()));
 }
 
 int main(int argc, char *argv[]) {
@@ -127,8 +150,13 @@ int main(int argc, char *argv[]) {
         dba::device_playback = cfg.device;
         dba::device_capture  = cfg.device;
 
+        auto buffer_config = read_config();
+
         xxcore_service service(std::move(cfg.addr), cfg.port);
-        service.configurate(read_config());
+
+        service.configurate(buffer_config, cfg.keypair_needs_updating);
+        write_config(buffer_config);
+
         service.run();
 
     } catch (noheap::runtime_error &excp) {

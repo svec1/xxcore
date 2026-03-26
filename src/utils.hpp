@@ -49,17 +49,22 @@ concept Byte =
 template<typename T, std::size_t buffer_size>
 using buffer_type = std::array<T, buffer_size>;
 template<std::size_t buffer_size, Byte T = byte>
-using buffer_bytes_type = std::array<T, buffer_size>;
-
-template<typename T>
-concept Buffer_bytes = std::same_as<
-    std::decay_t<T>,
-    buffer_bytes_type<std::decay_t<T>{}.size(), typename std::decay_t<T>::value_type>>;
+using buffer_bytes_type = buffer_type<T, buffer_size>;
+template<std::size_t buffer_size>
+using buffer_chars_type = buffer_type<char, buffer_size>;
 
 template<typename T>
 concept Buffer =
     std::same_as<std::decay_t<T>, std::array<typename std::decay_t<T>::value_type,
                                              std::decay_t<T>{}.size()>>;
+template<typename T>
+concept Buffer_chars =
+    std::same_as<std::decay_t<T>, buffer_chars_type<std::decay_t<T>{}.size()>>;
+
+template<typename T>
+concept Buffer_bytes = std::same_as<
+    std::decay_t<T>,
+    buffer_bytes_type<std::decay_t<T>{}.size(), typename std::decay_t<T>::value_type>>;
 
 template<Buffer TReturn, typename TSource>
     requires(std::decay_t<TReturn>{}.size() <= std::decay_t<TSource>{}.size())
@@ -68,7 +73,7 @@ constexpr TReturn to_buffer(TSource &&el) {
 }
 template<std::size_t output_size, Buffer TSource>
     requires(output_size <= std::decay_t<TSource>{}.size())
-constexpr noheap::buffer_type<typename TSource::value_type, output_size>
+constexpr noheap::buffer_type<typename std::decay_t<TSource>::value_type, output_size>
     clip_buffer(TSource &&el) {
     return *reinterpret_cast<decltype(clip_buffer<output_size, TSource>(
         std::forward<TSource>(el))) *>(&el);
@@ -90,18 +95,30 @@ constexpr TReturn to_new_buffer(TSource &&buffer) {
 }
 
 template<Buffer_bytes TSource>
-constexpr buffer_type<char, std::decay_t<TSource>{}.size() * 2>
-    to_hex_string(TSource &&buffer) {
-    decltype(to_hex_string(buffer)) buffer_tmp{};
+constexpr buffer_chars_type<std::decay_t<TSource>{}.size() * 2>
+    hex_encode(TSource &&buffer) {
+    decltype(hex_encode(buffer)) buffer_tmp{};
 
     auto it = buffer_tmp.begin();
 
     for (auto ch : buffer) {
-        it = std::format_to_n(it, 1, "{:x}", static_cast<noheap::ubyte>(ch) >> 4).out;
-        it = std::format_to_n(
-                 it, 1, "{:x}",
-                 static_cast<noheap::ubyte>(static_cast<noheap::ubyte>(ch) << 4) >> 4)
+        it = std::format_to_n(it, 1, "{:x}", static_cast<ubyte>(ch) >> 4).out;
+        it = std::format_to_n(it, 1, "{:x}",
+                              static_cast<ubyte>(static_cast<ubyte>(ch) << 4) >> 4)
                  .out;
+    }
+
+    return buffer_tmp;
+}
+template<Buffer_chars TSource>
+constexpr buffer_type<ubyte, std::decay_t<TSource>{}.size() / 2>
+    hex_decode(TSource &&buffer) {
+    decltype(hex_decode(buffer)) buffer_tmp{};
+
+    for (std::size_t i = 0; i < buffer.size() - 1; i += 2) {
+        typename decltype(buffer_tmp)::value_type ch = 0;
+        ch |= buffer[i] << 4;
+        ch |= buffer[i + 1];
     }
 
     return buffer_tmp;
@@ -114,16 +131,15 @@ constexpr TReturn represent_bytes(TSource &&buffer) {
     return *reinterpret_cast<TReturn *>(buffer.data());
 }
 
-template<Buffer TReturn>
-TReturn get_random_bytes() {
-    TReturn buffer_tmp;
+template<std::size_t count_bytes>
+buffer_bytes_type<count_bytes, ubyte> get_random_bytes() {
+    decltype(get_random_bytes<count_bytes>()) buffer_tmp;
 
     std::random_device rd;
     std::mt19937       gen(rd());
 
-    std::uniform_int_distribution<typename TReturn::value_type> distrib(
-        std::numeric_limits<typename TReturn::value_type>::min(),
-        std::numeric_limits<typename TReturn::value_type>::max());
+    std::uniform_int_distribution<ubyte> distrib(std::numeric_limits<ubyte>::min(),
+                                                 std::numeric_limits<ubyte>::max());
 
     for (auto &it : buffer_tmp)
         it = distrib(rd);
@@ -141,12 +157,6 @@ bool is_equal_bytes(std::span<T> b1, std::span<T> b2) {
         mismatch |= static_cast<unsigned char>(b1[i] ^ b2[i]);
 
     return !mismatch;
-}
-
-template<typename T>
-    requires std::numeric_limits<T>::is_integer
-T get_bits(T num, ubyte start, ubyte len) {
-    return num & T(((1u << len) - 1) << start);
 }
 
 class print_impl final {
