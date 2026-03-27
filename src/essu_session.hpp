@@ -307,7 +307,7 @@ void essu_session::generate_header_obfs_key(
     noise_context_type::buffer_handshake_payload_type     &&buffer_handshake_payload,
     noise_context_type::dh_key_type                        &header_obfs_key,
     buffer_session_id_type                                 &buffer_session_id) {
-    // Generates hash from previous result
+    // Generates unique values
     std::decay_t<decltype(buffer_hash)> output1, output2;
     typename noise_context_type::hash_state{}.hkdf(
         {buffer_hash.data(), buffer_hash.size()},
