@@ -39,8 +39,7 @@ private:
         if constexpr (noise_config.ecdh == noise::ecdh_type::x25519
                       || noise_config.ecdh == noise::ecdh_type::x448)
             return noise::get_dh_key_size<noise_config.ecdh>()
-                   + noise_context_type::pre_shared_key_size
-                   + noise_context_type::mac_size * 2;
+                   + noise_context_type::mac_size;
         else if constexpr (noise_config.ecdh == noise::ecdh_type::x25519_hybrid_kyber1024
                            || noise_config.ecdh
                                   == noise::ecdh_type::x448_hybrid_kyber1024)
@@ -499,6 +498,9 @@ public:
             noise_ctx.get_handshake_buffer().set(
                 {noise_handshake_packet.data(), noise_handshake_packet.size()}, 0);
             noise_ctx.set_handshake_message();
+
+            noheap::println("{}",
+                            std::string_view(noheap::hex_encode(noise_handshake_packet)));
 
             // Adds ephemeral key obfuscation on ephemeral key
             if (number_handshake_parts == 1) {
