@@ -568,7 +568,7 @@ noise_role noise_context<_config>::get_role() const {
 
 template<noise_context_config _config>
 void noise_context<_config>::set_handshake_message() {
-    if (handshake_payload_buffer.get().size != handshake_payload_size)
+    if (handshake_payload_buffer.get().size > handshake_payload_size)
         handle_error(0, "Invalid size of handshake payload.");
 
     std::size_t ret;
@@ -581,7 +581,7 @@ void noise_context<_config>::set_handshake_message() {
 }
 template<noise_context_config _config>
 void noise_context<_config>::get_handshake_message() {
-    if (handshake_payload_buffer.get().size != handshake_payload_size)
+    if (handshake_payload_buffer.get().size > handshake_payload_size)
         handle_error(0, "Invalid size of handshake payload.");
 
     std::size_t ret;
