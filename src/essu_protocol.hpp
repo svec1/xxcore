@@ -8,9 +8,9 @@
 
 namespace essu {
 
-static constexpr std::size_t packet_size       = 340;
-static constexpr std::size_t header_data_size  = 8;
-static constexpr std::size_t payload_data_size = packet_size - header_data_size;
+static constexpr std::size_t packet_size      = 340;
+static constexpr std::size_t header_data_size = 8;
+static constexpr std::size_t buffer_data_size = packet_size - header_data_size;
 
 static constexpr std::size_t batch_packets_count = 4;
 
@@ -39,7 +39,8 @@ private:
         if constexpr (noise_config.ecdh == noise::ecdh_type::x25519
                       || noise_config.ecdh == noise::ecdh_type::x448)
             return noise::get_dh_key_size<noise_config.ecdh>()
-                   + noise_context_type::mac_size;
+                   + noise_context_type::pre_shared_key_size
+                   + noise_context_type::mac_size * 2;
         else if constexpr (noise_config.ecdh == noise::ecdh_type::x25519_hybrid_kyber1024
                            || noise_config.ecdh
                                   == noise::ecdh_type::x448_hybrid_kyber1024)
@@ -114,21 +115,15 @@ public:
     };
 
 public:
-    static constexpr std::size_t get_buffer_size() { return payload_data_size; }
+    static constexpr std::size_t get_buffer_size() { return buffer_data_size; }
     static constexpr std::size_t get_buffer_size_without_mac() {
         return get_buffer_size() - noise_context_type::mac_size;
-    }
-    static constexpr std::size_t get_payload_data_size() {
-        return config_type::payload_data_size;
-    }
-    static constexpr std::size_t get_payload_data_size_with_mac() {
-        return config_type::payload_data_size + noise_context_type::mac_size;
     }
 
 public:
     static_assert(sizeof(header_data_type) == header_data_size,
                   "Header size is invalid.");
-    static_assert(get_payload_data_size_with_mac() <= get_buffer_size(),
+    static_assert(config_type::payload_data_size <= get_buffer_size_without_mac(),
                   "Unexpected size of payload data.");
 
 public:
@@ -220,7 +215,7 @@ public:
             update_protocol_status(node_info, pckt->packets[0]);
 
             for (std::size_t i = 0; i < pckt->packets.size(); ++i) {
-                auto &packet_tmp = pckt->packets[i];
+                transport_unit_type &packet_tmp = pckt->packets[i];
 
                 packet_tmp.header.packet_number = node_info.sender_packet_number++;
 
@@ -228,7 +223,8 @@ public:
                 {
                     // Determines payload size of the packet to define size of random
                     // padding
-                    std::size_t payload_data_size = packet_tmp.buffer.size();
+                    std::size_t payload_data_size =
+                        packet_tmp.get_buffer_size_without_mac();
                     if (packet_tmp.header.type
                         == transport_unit_type::payload_type::session_request)
                         payload_data_size = config_type::hs1_size;
@@ -240,7 +236,8 @@ public:
                         payload_data_size = config_type::hs3_size;
                     else if (packet_tmp.header.type
                              == transport_unit_type::payload_type::data)
-                        payload_data_size = packet_tmp.get_payload_data_size_with_mac();
+                        payload_data_size =
+                            transport_unit_type::config_type::payload_data_size;
 
                     // Dummy packet
                     if (packet_tmp.header.flag == transport_unit_type::flag_type::drop
@@ -258,14 +255,13 @@ public:
                     cipher_state_tmp.pad();
                 }
 
-                // Encrypts payload data and authenticates based on the header
+                // Encrypts buffer data and authenticates based on the header
                 if (packet_tmp.header.type == transport_unit_type::payload_type::data) {
                     if (!node_info.payload_cipher_state_p)
                         throw noheap::runtime_error("Cipher state for payloads is null.");
                     node_info.payload_cipher_state_p->input_buffer.set(
-                        {packet_tmp.buffer.data(),
-                         packet_tmp.get_payload_data_size_with_mac()},
-                        packet_tmp.get_payload_data_size());
+                        {packet_tmp.buffer.data(), packet_tmp.buffer.size()},
+                        packet_tmp.get_buffer_size_without_mac());
                     node_info.payload_cipher_state_p->set_nonce(
                         packet_tmp.header.packet_number);
                     node_info.payload_cipher_state_p->encrypt(
@@ -358,10 +354,10 @@ public:
                     if (!node_info.payload_cipher_state_p)
                         throw noheap::runtime_error("Cipher state for payloads is null.");
 
-                    // Decrypts payload data
+                    // Decrypts buffer data
                     node_info.payload_cipher_state_p->output_buffer.set(
                         {packet_tmp.buffer.data(), packet_tmp.buffer.size()},
-                        packet_tmp.get_payload_data_size_with_mac());
+                        packet_tmp.buffer.size());
                     node_info.payload_cipher_state_p->set_nonce(
                         packet_tmp.header.packet_number);
                     node_info.payload_cipher_state_p->decrypt(
