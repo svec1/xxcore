@@ -3,8 +3,6 @@
 
 #include <unistd.h>
 
-#include <print>
-
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -112,6 +110,7 @@ constexpr buffer_chars_type<std::decay_t<TSource>{}.size() * 2>
     return buffer_tmp;
 }
 template<Buffer_chars TSource>
+    requires(std::decay_t<TSource>{}.size() % 2 == 0)
 constexpr buffer_type<ubyte, std::decay_t<TSource>{}.size() / 2>
     hex_decode(TSource &&buffer) {
     decltype(hex_decode(buffer)) buffer_tmp{};
@@ -119,7 +118,7 @@ constexpr buffer_type<ubyte, std::decay_t<TSource>{}.size() / 2>
     for (std::size_t i = 0, j = 0; i < buffer.size() - 1; i += 2, ++j) {
         // https://lemire.me/blog/2019/04/17/parsing-short-hexadecimal-strings-efficiently/
         static constexpr auto convertone = [](ubyte ch) {
-            return static_cast<ubyte>((ch & 0xF) + 9 * (ch >> 6));
+            return static_cast<ubyte>((ch & 0xf) + (9 * (ch >> 6)));
         };
 
         buffer_tmp[j] = (convertone(buffer[i]) << 4) | convertone(buffer[i + 1]);
@@ -151,8 +150,7 @@ buffer_bytes_type<count_bytes, ubyte> get_random_bytes() {
     return buffer_tmp;
 }
 
-template<typename T>
-bool is_equal_bytes(std::span<T> b1, std::span<T> b2) {
+bool is_equal_bytes(std::span<const ubyte> b1, std::span<const ubyte> b2) {
     if (b1.size() != b2.size())
         return false;
 

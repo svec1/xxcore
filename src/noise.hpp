@@ -669,11 +669,23 @@ void noise_context<_config>::set_local_keypair(const keypair_type &kp) {
     NoiseDHState *dh = noise_handshakestate_get_local_keypair_dh(handshakestate);
 
     std::size_t ret;
-    if ((ret = noise_dhstate_set_keypair(
-             dh, reinterpret_cast<const noheap::ubyte *>(kp.priv.data()), kp.priv.size(),
-             reinterpret_cast<const noheap::ubyte *>(kp.pub.data()), kp.pub.size()))
+    if ((ret = noise_dhstate_set_keypair_private(
+             dh, reinterpret_cast<const noheap::ubyte *>(kp.priv.data()), kp.priv.size()))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to set local keypair.");
+
+    dh_key_type derived_public_key;
+    if ((ret = noise_dhstate_get_public_key(
+             dh, reinterpret_cast<noheap::ubyte *>(derived_public_key.data()),
+             derived_public_key.size()))
+        != NOISE_ERROR_NONE)
+        handle_error(ret, "Failed to get local public keypair.");
+
+    if (!noheap::is_equal_bytes(
+            {reinterpret_cast<const noheap::ubyte *>(derived_public_key.data()),
+             derived_public_key.size()},
+            {reinterpret_cast<const noheap::ubyte *>(kp.pub.data()), kp.pub.size()}))
+        handle_error(ret, "The passed local public key is invalid.");
 }
 template<noise_context_config _config>
 noise_context<_config>::name_id noise_context<_config>::get_name_id() {

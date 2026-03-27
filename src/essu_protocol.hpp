@@ -458,7 +458,7 @@ public:
 private:
     node_info_s_type::iterator find_node_info(network::buffer_address_type addr) const {
         return std::find_if(node_info_s.begin(), node_info_s.end(), [&](const auto &el) {
-            return noheap::is_equal_bytes<const noheap::ubyte>(
+            return noheap::is_equal_bytes(
                 {reinterpret_cast<const noheap::ubyte *>(el.first.data()),
                  el.first.size()},
                 {reinterpret_cast<const noheap::ubyte *>(addr.data()), addr.size()});
@@ -588,11 +588,6 @@ public:
             && payload_packet.header.flag
                    == decltype(payload_packet.header.flag)::wait_next)
             return;
-        noheap::println(
-            "{}",
-            std::string_view(
-                noheap::hex_encode(typename noise_context_type::hash_state{}.get_hash(
-                    {noheap::clip_buffer<48>(noise_handshake_packet).data(), 48}))));
 
         if (number_handshake_parts == 1)
             // Deletes ephemeral key obfuscation

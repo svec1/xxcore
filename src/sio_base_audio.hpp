@@ -21,7 +21,7 @@ protected:
     virtual void init_params() = 0;
 
 protected:
-    int    handle;
+    int handle;
 
 private:
     pollfd pfd;
