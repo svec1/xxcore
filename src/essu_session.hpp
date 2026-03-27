@@ -114,6 +114,9 @@ void essu_session::establish_connection(
     auto node_it = protocol.create_node_info(buffer_remote_addr, payload_cipher_state,
                                              header_obfs_key);
 
+    log.to_all("{}: Connection attempt with remote key: {}", hex_remote_addr,
+               std::string_view(noheap::hex_encode(remote_public_key)));
+
     // Resolves each other's ip
     try {
         if (role == noise::noise_role::INITIATOR) {

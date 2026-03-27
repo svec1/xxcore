@@ -14,7 +14,6 @@ static constexpr std::size_t payload_data_size = packet_size - header_data_size;
 
 static constexpr std::size_t batch_packets_count = 4;
 
-// Pattern: NoisePSK_[]_[]+chaobfse+randval_ChaChaPoly_BLAKE2b
 template<noise::noise_pattern _pattern, noise::ecdh_type _ecdh,
          std::size_t _payload_data_size>
 struct transport_data_config_type {
@@ -25,9 +24,7 @@ public:
     using noise_context_type = noise::noise_context<noise_config>;
 
 public:
-    static_assert(noise_config.pattern == noise::noise_pattern::XX
-                      || noise_config.pattern == noise::noise_pattern::XX_HFS
-                      || noise_config.pattern == noise::noise_pattern::XK
+    static_assert(noise_config.pattern == noise::noise_pattern::XK
                       || noise_config.pattern == noise::noise_pattern::XK_HFS,
                   "The passed noise pattern is unavailable.");
 
@@ -53,33 +50,17 @@ private:
             static_assert(false, "Unreachable.");
     }
     static consteval std::size_t get_hs2_size() {
-        if constexpr (noise_config.pattern == noise::noise_pattern::XX
-                      || noise_config.pattern == noise::noise_pattern::XX_HFS) {
-            if constexpr (noise_config.ecdh == noise::ecdh_type::x25519
-                          || noise_config.ecdh == noise::ecdh_type::x448)
-                return noise::get_dh_key_size<noise_config.ecdh>() * 2
-                       + noise_context_type::mac_size;
-            else if constexpr (noise_config.ecdh
-                                   == noise::ecdh_type::x25519_hybrid_kyber1024
-                               || noise_config.ecdh
-                                      == noise::ecdh_type::x448_hybrid_kyber1024)
-                return noise::get_dh_key_size<noise_config.ecdh>() * 2
-                       + noise::get_kem_cipher_text_size<noise_config.ecdh>()
-                       + noise_context_type::mac_size;
-        } else if constexpr (noise_config.pattern == noise::noise_pattern::XK
-                             || noise_config.pattern == noise::noise_pattern::XK_HFS) {
-            if constexpr (noise_config.ecdh == noise::ecdh_type::x25519
-                          || noise_config.ecdh == noise::ecdh_type::x448)
-                return noise::get_dh_key_size<noise_config.ecdh>()
-                       + noise_context_type::mac_size;
-            else if constexpr (noise_config.ecdh
-                                   == noise::ecdh_type::x25519_hybrid_kyber1024
-                               || noise_config.ecdh
-                                      == noise::ecdh_type::x448_hybrid_kyber1024)
-                return noise::get_dh_key_size<noise_config.ecdh>()
-                       + noise::get_kem_cipher_text_size<noise_config.ecdh>()
-                       + noise_context_type::mac_size;
-        } else
+        if constexpr (noise_config.ecdh == noise::ecdh_type::x25519
+                      || noise_config.ecdh == noise::ecdh_type::x448)
+            return noise::get_dh_key_size<noise_config.ecdh>()
+                   + noise_context_type::mac_size;
+        else if constexpr (noise_config.ecdh == noise::ecdh_type::x25519_hybrid_kyber1024
+                           || noise_config.ecdh
+                                  == noise::ecdh_type::x448_hybrid_kyber1024)
+            return noise::get_dh_key_size<noise_config.ecdh>()
+                   + noise::get_kem_cipher_text_size<noise_config.ecdh>()
+                   + noise_context_type::mac_size;
+        else
             static_assert(false, "Unreachable.");
     }
     static consteval std::size_t get_hs3_size() {
@@ -637,7 +618,7 @@ public:
 
         ephemeral_obfs_key = std::move(_ephemeral_obfs_key);
 
-        number_handshake_parts        = 0;
+        number_handshake_parts        = 1;
         offset_noise_handshake_packet = 0;
         fragmentation                 = false;
     }
