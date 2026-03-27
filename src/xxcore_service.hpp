@@ -120,34 +120,32 @@ void xxcore_service::configurate(buffer_config_type &buffer, bool generate_new_k
             auto value_p = data.try_at(field_name);
             if (!value_p)
                 return;
-
             auto string_p = value_p->try_as_string();
-            if (string_p) {
-                if (generate_new_keypair && field_name == local_private_string) {
-                    *string_p  = std::string_view(noheap::hex_encode(keypair_tmp.priv));
-                    buffer_key = std::move(keypair_tmp.priv);
-                    return;
-                } else if (generate_new_keypair && field_name == local_public_string) {
-                    *string_p  = std::string_view(noheap::hex_encode(keypair_tmp.pub));
-                    buffer_key = std::move(keypair_tmp.pub);
-                    return;
-                }
-
-                if (string_p->size() >= buffer.size())
-                    throw noheap::runtime_error(
-                        buffer_owner,
-                        "The specified key field has a large size:\n\t{}: {}",
-                        buffer.size(), field_name, *string_p);
-
-                buffer_key_hex_type buffer_key_hex{};
-                std::copy(reinterpret_cast<noheap::rbyte *>(string_p->begin()),
-                          reinterpret_cast<noheap::rbyte *>(string_p->end()),
-                          reinterpret_cast<noheap::rbyte *>(buffer_key_hex.begin()));
-                buffer_key = noheap::to_buffer<decltype(buffer_key)>(
-                    noheap::hex_decode(buffer_key_hex));
-            } else
+            if (!string_p)
                 throw noheap::runtime_error(buffer_owner,
                                             "Field of key must be a string.");
+
+            if (generate_new_keypair && field_name == local_private_string) {
+                *string_p  = std::string_view(noheap::hex_encode(keypair_tmp.priv));
+                buffer_key = std::move(keypair_tmp.priv);
+                return;
+            } else if (generate_new_keypair && field_name == local_public_string) {
+                *string_p  = std::string_view(noheap::hex_encode(keypair_tmp.pub));
+                buffer_key = std::move(keypair_tmp.pub);
+                return;
+            }
+
+            if (string_p->size() >= buffer.size())
+                throw noheap::runtime_error(
+                    buffer_owner, "The specified key field has a large size:\n\t{}: {}",
+                    buffer.size(), field_name, *string_p);
+
+            buffer_key_hex_type buffer_key_hex{};
+            std::copy(reinterpret_cast<noheap::rbyte *>(string_p->begin()),
+                      reinterpret_cast<noheap::rbyte *>(string_p->end()),
+                      reinterpret_cast<noheap::rbyte *>(buffer_key_hex.begin()));
+            buffer_key = noheap::to_buffer<decltype(buffer_key)>(
+                noheap::hex_decode(buffer_key_hex));
         };
 
         auto value_p = data.try_at(role_string);

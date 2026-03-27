@@ -562,7 +562,7 @@ public:
         offset_noise_handshake_packet = 0;
         fragmentation                 = false;
 
-        --number_handshake_parts;
+        ++number_handshake_parts;
     }
     constexpr void process_packet(packet_type &&pckt) override {
         check_noise_action(noise::noise_action::READ_MESSAGE);
@@ -588,6 +588,11 @@ public:
             && payload_packet.header.flag
                    == decltype(payload_packet.header.flag)::wait_next)
             return;
+        noheap::println(
+            "{}",
+            std::string_view(
+                noheap::hex_encode(typename noise_context_type::hash_state{}.get_hash(
+                    {noheap::clip_buffer<48>(noise_handshake_packet).data(), 48}))));
 
         if (number_handshake_parts == 1)
             // Deletes ephemeral key obfuscation
@@ -599,12 +604,6 @@ public:
             // Sets buffer to get random value
             noise_ctx.get_handshake_payload_buffer().set(
                 {noise_handshake_payload.data(), noise_handshake_payload.size()}, 0);
-
-        noheap::println(
-            "{}",
-            std::string_view(
-                noheap::hex_encode(typename noise_context_type::hash_state{}.get_hash(
-                    {noise_handshake_packet.data(), noise_handshake_packet.size()}))));
 
         // Sets noise message
         noise_ctx.get_handshake_buffer().set(

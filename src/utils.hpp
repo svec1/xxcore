@@ -99,13 +99,14 @@ constexpr buffer_chars_type<std::decay_t<TSource>{}.size() * 2>
     hex_encode(TSource &&buffer) {
     decltype(hex_encode(buffer)) buffer_tmp{};
 
-    auto it = buffer_tmp.begin();
+    for (std::size_t i = 0, j = 0; i < buffer_tmp.size() - 1; i += 2, ++j) {
+        static constexpr auto to_hex = [](ubyte ch) {
+            return "0123456789abcdef"[static_cast<std::size_t>(ch)];
+        };
 
-    for (auto ch : buffer) {
-        it = std::format_to_n(it, 1, "{:x}", static_cast<ubyte>(ch) >> 4).out;
-        it = std::format_to_n(it, 1, "{:x}",
-                              static_cast<ubyte>(static_cast<ubyte>(ch) << 4) >> 4)
-                 .out;
+        buffer_tmp[i] = to_hex(static_cast<ubyte>(buffer[j]) >> 4);
+        buffer_tmp[i + 1] =
+            to_hex(static_cast<ubyte>(static_cast<ubyte>(buffer[j]) << 4) >> 4);
     }
 
     return buffer_tmp;
@@ -115,10 +116,13 @@ constexpr buffer_type<ubyte, std::decay_t<TSource>{}.size() / 2>
     hex_decode(TSource &&buffer) {
     decltype(hex_decode(buffer)) buffer_tmp{};
 
-    for (std::size_t i = 0; i < buffer.size() - 1; i += 2) {
-        typename decltype(buffer_tmp)::value_type ch = 0;
-        ch |= buffer[i] << 4;
-        ch |= buffer[i + 1];
+    for (std::size_t i = 0, j = 0; i < buffer.size() - 1; i += 2, ++j) {
+        // https://lemire.me/blog/2019/04/17/parsing-short-hexadecimal-strings-efficiently/
+        static constexpr auto convertone = [](ubyte ch) {
+            return static_cast<ubyte>((ch & 0xF) + 9 * (ch >> 6));
+        };
+
+        buffer_tmp[j] = (convertone(buffer[i]) << 4) | convertone(buffer[i + 1]);
     }
 
     return buffer_tmp;
