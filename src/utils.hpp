@@ -54,23 +54,25 @@ using buffer_chars_type = buffer_type<char, buffer_size>;
 template<typename T>
 concept Buffer =
     std::same_as<std::decay_t<T>, std::array<typename std::decay_t<T>::value_type,
-                                             std::decay_t<T>{}.size()>>;
-template<typename T>
-concept Buffer_chars =
-    std::same_as<std::decay_t<T>, buffer_chars_type<std::decay_t<T>{}.size()>>;
+                                             std::tuple_size_v<std::decay_t<T>>>>;
+template<Buffer T>
+constexpr std::size_t buffer_size = std::tuple_size_v<std::decay_t<T>>;
 
 template<typename T>
-concept Buffer_bytes = std::same_as<
-    std::decay_t<T>,
-    buffer_bytes_type<std::decay_t<T>{}.size(), typename std::decay_t<T>::value_type>>;
+concept Buffer_chars = std::same_as<std::decay_t<T>, buffer_chars_type<buffer_size<T>>>;
+
+template<typename T>
+concept Buffer_bytes =
+    std::same_as<std::decay_t<T>,
+                 buffer_bytes_type<buffer_size<T>, typename std::decay_t<T>::value_type>>;
 
 template<Buffer TReturn, typename TSource>
-    requires(std::decay_t<TReturn>{}.size() <= std::decay_t<TSource>{}.size())
+    requires(buffer_size<TReturn> <= buffer_size<TSource>)
 constexpr TReturn to_buffer(TSource &&el) {
     return *reinterpret_cast<std::remove_reference_t<TReturn> *>(&el);
 }
 template<std::size_t output_size, Buffer TSource>
-    requires(output_size <= std::decay_t<TSource>{}.size())
+    requires(output_size <= buffer_size<TSource>)
 constexpr noheap::buffer_type<typename std::decay_t<TSource>::value_type, output_size>
     clip_buffer(TSource &&el) {
     return *reinterpret_cast<decltype(clip_buffer<output_size, TSource>(
@@ -93,8 +95,7 @@ constexpr TReturn to_new_buffer(TSource &&buffer) {
 }
 
 template<Buffer_bytes TSource>
-constexpr buffer_chars_type<std::decay_t<TSource>{}.size() * 2>
-    hex_encode(TSource &&buffer) {
+constexpr buffer_chars_type<buffer_size<TSource> * 2> hex_encode(TSource &&buffer) {
     decltype(hex_encode(buffer)) buffer_tmp{};
 
     for (std::size_t i = 0, j = 0; i < buffer_tmp.size() - 1; i += 2, ++j) {
@@ -102,17 +103,15 @@ constexpr buffer_chars_type<std::decay_t<TSource>{}.size() * 2>
             return "0123456789abcdef"[static_cast<std::size_t>(ch)];
         };
 
-        buffer_tmp[i] = to_hex(static_cast<ubyte>(buffer[j]) >> 4);
-        buffer_tmp[i + 1] =
-            to_hex(static_cast<ubyte>(static_cast<ubyte>(buffer[j]) << 4) >> 4);
+        buffer_tmp[i]     = to_hex(static_cast<ubyte>(buffer[j]) >> 4);
+        buffer_tmp[i + 1] = to_hex(static_cast<ubyte>(buffer[j]) & 0xf);
     }
 
     return buffer_tmp;
 }
 template<Buffer_chars TSource>
-    requires(std::decay_t<TSource>{}.size() % 2 == 0)
-constexpr buffer_type<ubyte, std::decay_t<TSource>{}.size() / 2>
-    hex_decode(TSource &&buffer) {
+    requires(buffer_size<TSource> % 2 == 0)
+constexpr buffer_type<ubyte, buffer_size<TSource> / 2> hex_decode(TSource &&buffer) {
     decltype(hex_decode(buffer)) buffer_tmp{};
 
     for (std::size_t i = 0, j = 0; i < buffer.size() - 1; i += 2, ++j) {
@@ -128,8 +127,7 @@ constexpr buffer_type<ubyte, std::decay_t<TSource>{}.size() / 2>
 }
 
 template<typename TReturn, Buffer TSource>
-    requires(!std::is_pointer_v<TReturn>
-             && std::decay_t<TSource>{}.size() == sizeof(TReturn))
+    requires(!std::is_pointer_v<TReturn> && buffer_size<TSource> == sizeof(TReturn))
 constexpr TReturn represent_bytes(TSource &&buffer) {
     return *reinterpret_cast<TReturn *>(buffer.data());
 }

@@ -499,9 +499,6 @@ public:
                 {noise_handshake_packet.data(), noise_handshake_packet.size()}, 0);
             noise_ctx.set_handshake_message();
 
-            noheap::println("{}",
-                            std::string_view(noheap::hex_encode(noise_handshake_packet)));
-
             // Adds ephemeral key obfuscation on ephemeral key
             if (number_handshake_parts == 1) {
                 std::transform(noise_handshake_packet.begin(),
@@ -608,7 +605,7 @@ public:
         noise_ctx.init(role);
         noise_ctx.set_prologue(std::move(ext));
 
-        noise_ctx.set_local_keypair(noise_ctx.generate_keypair());
+        noise_ctx.set_local_keypair(std::move(local_keypair));
         noise_ctx.set_remote_public_key(std::move(remote_public_key));
         noise_ctx.set_pre_shared_key(std::move(pre_shared_key));
 
