@@ -74,10 +74,9 @@ constexpr TReturn to_buffer(TSource &&el) {
 template<std::size_t output_size, std::size_t begin, Buffer TSource>
     requires(begin + output_size <= buffer_size<TSource>)
 constexpr noheap::buffer_type<typename std::decay_t<TSource>::value_type, output_size>
-    clip_buffer(TSource &&el) {
+    clip_buffer(TSource &&buffer) {
     return *(reinterpret_cast<decltype(clip_buffer<output_size, begin, TSource>(
-                 std::forward<TSource>(el))) *>(&el)
-             + begin);
+                 std::forward<TSource>(buffer))) *>(buffer.begin() + begin));
 }
 
 template<Buffer TReturn, Buffer TSource>
@@ -128,9 +127,9 @@ constexpr buffer_type<ubyte, buffer_size<TSource> / 2> hex_decode(TSource &&buff
 }
 
 template<typename TReturn, Buffer TSource>
-    requires(!std::is_pointer_v<TReturn> && buffer_size<TSource> == sizeof(TReturn))
+    requires(!std::is_pointer_v<TReturn> && buffer_size<TSource> >= sizeof(TReturn))
 constexpr TReturn represent_bytes(TSource &&buffer) {
-    return *reinterpret_cast<std::decay_t<TReturn> *>(buffer.data());
+    return *reinterpret_cast<std::decay_t<TReturn> *>(&buffer);
 }
 
 template<std::size_t count_bytes>

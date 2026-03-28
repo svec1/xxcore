@@ -191,7 +191,7 @@ void essu_session::establish_connection(
         udp_stream           = std::move(noise_udp_stream);
 
         // Generates values for header obfs key + initial packet number + session_id
-        buffer_unique_value_type value1, value2;
+        buffer_unique_value_type value1{}, value2{};
         generate_pair_session_unique_value(noise_context.get_handshake_hash(),
                                            noise_context.get_handshake_payload(), value1,
                                            value2);
