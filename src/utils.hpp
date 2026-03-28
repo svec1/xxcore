@@ -71,12 +71,13 @@ template<Buffer TReturn, typename TSource>
 constexpr TReturn to_buffer(TSource &&el) {
     return *reinterpret_cast<std::remove_reference_t<TReturn> *>(&el);
 }
-template<std::size_t output_size, Buffer TSource>
-    requires(output_size <= buffer_size<TSource>)
+template<std::size_t output_size, std::size_t begin, Buffer TSource>
+    requires(begin + output_size <= buffer_size<TSource>)
 constexpr noheap::buffer_type<typename std::decay_t<TSource>::value_type, output_size>
     clip_buffer(TSource &&el) {
-    return *reinterpret_cast<decltype(clip_buffer<output_size, TSource>(
-        std::forward<TSource>(el))) *>(&el);
+    return *(reinterpret_cast<decltype(clip_buffer<output_size, begin, TSource>(
+                 std::forward<TSource>(el))) *>(&el)
+             + begin);
 }
 
 template<Buffer TReturn, Buffer TSource>
@@ -129,7 +130,7 @@ constexpr buffer_type<ubyte, buffer_size<TSource> / 2> hex_decode(TSource &&buff
 template<typename TReturn, Buffer TSource>
     requires(!std::is_pointer_v<TReturn> && buffer_size<TSource> == sizeof(TReturn))
 constexpr TReturn represent_bytes(TSource &&buffer) {
-    return *reinterpret_cast<TReturn *>(buffer.data());
+    return *reinterpret_cast<std::decay_t<TReturn> *>(buffer.data());
 }
 
 template<std::size_t count_bytes>
@@ -162,7 +163,7 @@ bool is_equal_bytes(std::span<const ubyte> b1, std::span<const ubyte> b2) {
 class print_impl final {
 public:
     static constexpr std::size_t buffer_size = output_buffer_size;
-    using buffer_type                        = buffer_bytes_type<buffer_size>;
+    using buffer_type                        = buffer_chars_type<buffer_size>;
 
 public:
     template<char end_ch, typename... Args>
@@ -193,7 +194,7 @@ class log_impl final {
 public:
     struct owner_impl final {
         static constexpr std::size_t buffer_size = 24;
-        using buffer_type                        = buffer_type<char, buffer_size>;
+        using buffer_type                        = buffer_chars_type<buffer_size>;
     };
 
     static consteval owner_impl::buffer_type create_owner(std::string_view owner) {
@@ -231,7 +232,7 @@ public:
 class runtime_error final : public std::exception {
 public:
     static constexpr std::size_t buffer_size = output_buffer_size;
-    using buffer_type                        = buffer_type<char, buffer_size>;
+    using buffer_type                        = buffer_chars_type<buffer_size>;
 
 public:
     template<typename... Args>

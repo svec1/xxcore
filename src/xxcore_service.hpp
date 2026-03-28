@@ -53,7 +53,8 @@ private:
         }
         constexpr void process_packet(audio_action::packet_type &&pckt) override {
             audio_flow_type::buffer_type buffer_tmp;
-            std::copy(pckt->packets[0].buffer.begin(), pckt->packets[0].buffer.end(),
+            std::copy(pckt->packets[0].buffer.begin(),
+                      pckt->packets[0].buffer.begin() + buffer_tmp.size(),
                       reinterpret_cast<noheap::rbyte *>(buffer_tmp.begin()));
             audio.push(std::move(buffer_tmp), false);
         }

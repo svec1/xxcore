@@ -213,7 +213,7 @@ constexpr void base_audio<_cfg>::throw_error(std::format_string<Args...> format,
                              std::forward<Args>(args)...);
             end_it =
                 std::format_to_n(end_it, std::abs(std::distance(buffer.end(), end_it)),
-                                 "\n   | {}", buffer_format.data())
+                                 "\n   | {}", std::string_view(buffer_format))
                     .out;
         }
     }

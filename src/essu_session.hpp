@@ -28,7 +28,7 @@ public:
     using address_type = net_stream_udp::address_type;
     using port_type    = net_stream_udp::port_type;
 
-    using buffer_session_id_type = noise::buffer_type<8>;
+    using buffer_unique_value_type = noise::buffer_type<32>;
 
 public:
     essu_session(address_type _remote_addr, port_type port);
@@ -44,6 +44,12 @@ public:
 
     template<network::Derived_from_action Action>
     void run_stream_session();
+
+private:
+    template<typename... Args>
+    void message(std::format_string<Args...> format = "", Args &&...args);
+    template<typename... Args>
+    void throw_error(std::format_string<Args...> format = "", Args &&...args);
 
 private:
     template<network::Net_stream_udp TStream>
@@ -62,11 +68,10 @@ private:
         noise_context_type::dh_key_type       &ephemeral_obfs_key1,
         noise_context_type::dh_key_type       &ephemeral_obfs_key2);
 
-    static void generate_header_obfs_key(
+    static void generate_pair_session_unique_value(
         const noise_context_type::hash_state::buffer_hash_type &buffer_hash,
         noise_context_type::buffer_handshake_payload_type     &&buffer_handshake_payload,
-        noise_context_type::dh_key_type                        &header_obfs_key,
-        buffer_session_id_type                                 &buffer_session_id);
+        buffer_unique_value_type &output_value1, buffer_unique_value_type &output_value2);
 
 public:
     static constexpr noheap::log_impl::owner_impl::buffer_type buffer_owner =
@@ -77,23 +82,23 @@ private:
 
 private:
     network::buffer_address_type buffer_remote_addr;
-    noheap::buffer_type<char, typename network::buffer_address_v<v>::type{}.size() * 2>
-                           hex_string_remote_addr;
-    const std::string_view hex_remote_addr{hex_string_remote_addr.data(),
-                                           hex_string_remote_addr.size()};
+    noheap::buffer_chars_type<noheap::buffer_size<network::buffer_address_v<v>::type> * 2>
+                           buffer_hex_remote_addr;
+    const std::string_view hex_remote_addr{buffer_hex_remote_addr};
 
     net_stream_udp                   udp_stream;
-    buffer_session_id_type           buffer_session_id{};
     noise_context_type::cipher_state payload_cipher_state{};
     noise_context_type::dh_key_type  header_obfs_key{};
+
+    std::size_t session_id;
 
     std::atomic<bool> running;
 };
 
 essu_session::essu_session(address_type remote_addr, port_type port)
     : buffer_remote_addr(udp_stream.get_address_bytes(remote_addr)),
-      hex_string_remote_addr(
-          noheap::clip_buffer<typename network::buffer_address_v<v>::type{}.size() * 2>(
+      buffer_hex_remote_addr(
+          noheap::clip_buffer<noheap::buffer_size<decltype(buffer_hex_remote_addr)>, 0>(
               noheap::hex_encode(buffer_remote_addr))),
       udp_stream(port) {
 }
@@ -105,8 +110,8 @@ void essu_session::establish_connection(
     wrapper_packet_type pckt{};
     const auto         &protocol = pckt.get_protocol();
 
-    decltype(hex_string_remote_addr) hex_string_own_addr{};
     decltype(buffer_remote_addr)     buffer_own_addr{};
+    decltype(buffer_hex_remote_addr) buffer_hex_own_addr{};
 
     for (auto it = pckt->packets.begin() + 1; it < pckt->packets.end(); ++it)
         it->header.flag = decltype(it->header.flag)::drop;
@@ -114,9 +119,9 @@ void essu_session::establish_connection(
     auto node_it = protocol.create_node_info(buffer_remote_addr, payload_cipher_state,
                                              header_obfs_key);
 
-    log.to_all("{}: Connection attempt: \n\t public key: {} \n\t remote key: {}",
-               hex_remote_addr, std::string_view(noheap::hex_encode(local_keypair.pub)),
-               std::string_view(noheap::hex_encode(remote_public_key)));
+    this->message("Creating essu session...");
+    this->message("Remote public key: {}",
+                  std::string_view(noheap::hex_encode(remote_public_key)));
 
     // Resolves each other's ip
     try {
@@ -142,12 +147,11 @@ void essu_session::establish_connection(
             node_send(udp_stream, pckt, node_it);
         }
 
-        hex_string_own_addr =
-            noheap::clip_buffer<typename network::buffer_address_v<v>::type{}.size() * 2>(
+        buffer_hex_own_addr =
+            noheap::clip_buffer<noheap::buffer_size<decltype(buffer_hex_own_addr)>, 0>(
                 noheap::hex_encode(buffer_own_addr));
     } catch (noheap::runtime_error &excp) {
-        throw noheap::runtime_error(buffer_owner, "{}: Failed to resolve ip. {}",
-                                    hex_remote_addr, excp.what());
+        this->throw_error("Failed to resolve ip. {}", excp.what());
     }
 
     protocol.set_starting_handshake(node_it);
@@ -183,21 +187,28 @@ void essu_session::establish_connection(
                 break;
         }
 
-        // Generates header obfuscation key
-        generate_header_obfs_key(noise_context.get_handshake_hash(),
-                                 noise_context.get_handshake_payload(), header_obfs_key,
-                                 buffer_session_id);
-
+        // Gets finally cipher state
         payload_cipher_state = noise_context.dump();
         udp_stream           = std::move(noise_udp_stream);
+
+        // Generates values for header obfs key + initial packet number + session_id
+        buffer_unique_value_type value1, value2;
+        generate_pair_session_unique_value(noise_context.get_handshake_hash(),
+                                           noise_context.get_handshake_payload(), value1,
+                                           value2);
+
+        header_obfs_key = value1;
+        session_id      = noheap::represent_bytes<std::size_t>(
+            noheap::clip_buffer<sizeof(std::size_t), 0>(value2));
+        protocol.set_packet_number(
+            node_it,
+            noheap::represent_bytes<std::size_t>(
+                noheap::clip_buffer<sizeof(std::size_t), sizeof(std::size_t)>(value2)));
     } catch (noheap::runtime_error &excp) {
-        throw noheap::runtime_error(buffer_owner,
-                                    "{}: Failed to establish connection. {}",
-                                    hex_remote_addr, excp.what());
+        this->throw_error("Failed to establish connection. {}", excp.what());
     }
 
-    log.to_all("Connection has been established: {}",
-               std::string_view(noheap::hex_encode(buffer_session_id)));
+    this->message("{} session is established.", session_id);
 }
 template<network::Derived_from_action Action>
 void essu_session::run_stream_session() {
@@ -236,9 +247,30 @@ void essu_session::run_stream_session() {
         future_object_to_send.get();
         future_object_to_receive.get();
     } catch (noheap::runtime_error &excp) {
-        throw noheap::runtime_error(buffer_owner, "{}: Connection terminated. {}",
-                                    hex_remote_addr, excp.what());
+        this->throw_error("Connection terminated. {}", excp.what());
     }
+}
+
+template<typename... Args>
+void essu_session::message(std::format_string<Args...> format, Args &&...args) {
+    noheap::buffer_chars_type<noheap::print_impl::buffer_size
+                              - noheap::buffer_size<decltype(buffer_owner)>
+                              - noheap::buffer_size<decltype(buffer_hex_remote_addr)>>
+        buffer_format{};
+    std::format_to_n(buffer_format.begin(), buffer_format.size(), format,
+                     std::forward<Args>(args)...);
+    log.to_all("{}: {}", hex_remote_addr, std::string_view(buffer_format));
+}
+template<typename... Args>
+void essu_session::throw_error(std::format_string<Args...> format, Args &&...args) {
+    noheap::buffer_chars_type<noheap::runtime_error::buffer_size
+                              - noheap::buffer_size<decltype(buffer_owner)>
+                              - noheap::buffer_size<decltype(buffer_hex_remote_addr)>>
+        buffer_format{};
+    std::format_to_n(buffer_format.begin(), buffer_format.size(), format,
+                     std::forward<Args>(args)...);
+    throw noheap::runtime_error(buffer_owner, "{}: {}", hex_remote_addr,
+                                std::string_view(buffer_format));
 }
 
 template<network::Net_stream_udp TStream>
@@ -291,7 +323,7 @@ void essu_session::generate_pair_ephemeral_obfs_key(
 
     // Gets 32 bytes-hash of public key
     auto public_key_hash =
-        noheap::clip_buffer<32>(typename noise_context_type::hash_state{}.get_hash(
+        noheap::clip_buffer<32, 0>(typename noise_context_type::hash_state{}.get_hash(
             {public_key.data(), public_key.size()}));
 
     // Generates keystream
@@ -306,27 +338,22 @@ void essu_session::generate_pair_ephemeral_obfs_key(
     std::copy(keystream.begin() + noise_context_type::dh_key_type{}.size(),
               keystream.end(), ephemeral_obfs_key2.begin());
 }
-void essu_session::generate_header_obfs_key(
+void essu_session::generate_pair_session_unique_value(
     const noise_context_type::hash_state::buffer_hash_type &buffer_hash,
     noise_context_type::buffer_handshake_payload_type     &&buffer_handshake_payload,
-    noise_context_type::dh_key_type                        &header_obfs_key,
-    buffer_session_id_type                                 &buffer_session_id) {
+    buffer_unique_value_type &output_value1, buffer_unique_value_type &output_value2) {
     // Generates unique values
-    std::decay_t<decltype(buffer_hash)> output1, output2;
+    std::decay_t<decltype(buffer_hash)> output_tmp1;
     typename noise_context_type::hash_state{}.hkdf(
         {buffer_hash.data(), buffer_hash.size()},
         {buffer_handshake_payload.data(), buffer_handshake_payload.size()},
-        {output1.data(), output1.size()}, {output2.data(), output2.size()});
+        {output_tmp1.data(), output_tmp1.size()},
+        {output_value2.data(), output_value2.size()});
 
-    // Generates keystream
-    noise::buffer_type<noise_context_type::dh_key_type{}.size()> keystream{};
+    // Generates keystream - the first output value
     crypto::chacha_encrypt(
-        {reinterpret_cast<noheap::ubyte *>(keystream.data()), keystream.size()},
-        noheap::to_buffer<const crypto::buffer_key_type &>(output1), {}, 0);
-
-    std::copy(keystream.begin(), keystream.end(), header_obfs_key.begin());
-    std::copy(output2.begin(), output2.begin() + buffer_session_id.size(),
-              buffer_session_id.begin());
+        {reinterpret_cast<noheap::ubyte *>(output_value1.data()), output_value1.size()},
+        noheap::to_buffer<const crypto::buffer_key_type &>(output_tmp1), {}, 0);
 }
 
 #endif
