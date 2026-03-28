@@ -201,8 +201,8 @@ void essu_session::establish_connection(
             noheap::clip_buffer<sizeof(std::size_t), 0>(value2));
         protocol.set_packet_number(
             node_it,
-            noheap::represent_bytes<std::size_t>(
-                noheap::clip_buffer<sizeof(std::size_t), sizeof(std::size_t)>(value2)));
+            noheap::represent_bytes<std::uint32_t>(
+                noheap::clip_buffer<sizeof(std::uint32_t), sizeof(std::size_t)>(value2)));
     } catch (noheap::runtime_error &excp) {
         this->throw_error("Failed to establish connection. {}", excp.what());
     }

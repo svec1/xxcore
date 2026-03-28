@@ -336,11 +336,34 @@ public:
                                    obfs_key_tmp.data(),
                                    reinterpret_cast<noheap::rbyte *>(&test_packet.header),
                                    std::bit_xor{});
-                    if (test_packet.header.packet_number == possible_packet_number) {
-                        packet_tmp  = std::move(test_packet);
-                        was_matched = true;
-                        break;
+
+                    if (test_packet.header.packet_number != possible_packet_number)
+                        continue;
+
+                    if (packet_tmp.header.type
+                        == transport_unit_type::payload_type::data) {
+                        if (!node_info.payload_cipher_state_p)
+                            throw noheap::runtime_error(
+                                "Cipher state for payloads is null.");
+
+                        // Tries to decrypt buffer data
+                        node_info.payload_cipher_state_p->output_buffer.set(
+                            {test_packet.buffer.data(), test_packet.buffer.size()},
+                            test_packet.buffer.size());
+                        node_info.payload_cipher_state_p->set_nonce(
+                            test_packet.header.packet_number);
+                        try {
+                            node_info.payload_cipher_state_p->decrypt(
+                                {reinterpret_cast<noheap::rbyte *>(&test_packet.header),
+                                 sizeof(test_packet.header)});
+                        } catch (noheap::runtime_error &) {
+                            continue;
+                        }
                     }
+
+                    packet_tmp  = test_packet;
+                    was_matched = true;
+                    break;
                 }
 
                 if (!was_matched)
@@ -348,21 +371,6 @@ public:
 
                 if (packet_tmp.header.flag == transport_unit_type::flag_type::drop)
                     continue;
-
-                if (packet_tmp.header.type == transport_unit_type::payload_type::data) {
-                    if (!node_info.payload_cipher_state_p)
-                        throw noheap::runtime_error("Cipher state for payloads is null.");
-
-                    // Decrypts buffer data
-                    node_info.payload_cipher_state_p->output_buffer.set(
-                        {packet_tmp.buffer.data(), packet_tmp.buffer.size()},
-                        packet_tmp.buffer.size());
-                    node_info.payload_cipher_state_p->set_nonce(
-                        packet_tmp.header.packet_number);
-                    node_info.payload_cipher_state_p->decrypt(
-                        {reinterpret_cast<noheap::rbyte *>(&packet_tmp.header),
-                         sizeof(packet_tmp.header)});
-                }
             }
 
             // Restores order of packets in batch
@@ -421,7 +429,7 @@ public:
             node_info_type::status_type::HS1;
     }
     void set_packet_number(node_info_s_type::const_iterator it,
-                           std::size_t                      packet_number) const {
+                           std::uint32_t                    packet_number) const {
         if (it == node_info_s.end())
             throw noheap::runtime_error(this->buffer_owner, "Iterator is null.");
 
