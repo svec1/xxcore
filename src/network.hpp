@@ -380,6 +380,7 @@ void net_stream_udp<Action, v>::cancel() {
 }
 template<Derived_from_action Action, ipv v>
 std::size_t net_stream_udp<Action, v>::run() {
+    io.restart();
     return io.run();
 }
 
@@ -496,6 +497,11 @@ void net_stream_udp<Action, v>::detail_async_receive_from(TWrapper_packet &pckt,
                     continue;
 
                 pckt = std::move(buffered_packet.pckt);
+
+                std::decay_t<TWrapper_packet>::handle(
+                    std::move(pckt), this->get_address_bytes(addr),
+                    std::bind(&Action::process_packet, &this->act,
+                              std::placeholders::_1));
                 return;
             }
         }
@@ -525,9 +531,9 @@ void net_stream_udp<Action, v>::register_async_socket_operation(Func         &&f
 
     if constexpr (async_op == async_socket_operation::send_to)
         socket.async_send_to(std::forward<TBuffer>(buffer), endpoint, handler);
-    else if constexpr (async_op == async_socket_operation::receive_from) {
+    else if constexpr (async_op == async_socket_operation::receive_from)
         socket.async_receive_from(std::forward<TBuffer>(buffer), endpoint, handler);
-    } else
+    else
         static_assert(false, "Unknown async operation.");
 }
 

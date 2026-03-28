@@ -177,9 +177,9 @@ void essu_session::establish_connection(
             auto action = noise_context.get_action();
             if (action == noise::noise_action::WRITE_MESSAGE) {
                 node_send(noise_udp_stream, pckt, node_it);
-            } else if (action == noise::noise_action::READ_MESSAGE)
+            } else if (action == noise::noise_action::READ_MESSAGE) {
                 node_receive(noise_udp_stream, pckt, node_it);
-            else
+            } else
                 break;
         }
 

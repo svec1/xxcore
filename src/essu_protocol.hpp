@@ -66,7 +66,7 @@ private:
     static consteval std::size_t get_hs3_size() {
         return noise::get_dh_key_size<noise_config.ecdh>()
                + noise_context_type::handshake_payload_size
-               + noise_context_type::mac_size;
+               + noise_context_type::mac_size * 2;
     }
 
 public:
@@ -489,7 +489,7 @@ public:
                 noise_handshake_payload =
                     noheap::to_buffer<std::decay_t<decltype(noise_handshake_payload)>>(
                         noheap::get_random_bytes<
-                            std::decay_t<decltype(noise_handshake_payload)>{}.size()>());
+                            noheap::buffer_size<decltype(noise_handshake_payload)>>());
                 noise_ctx.get_handshake_payload_buffer().set(
                     {noise_handshake_payload.data(), noise_handshake_payload.size()},
                     noise_handshake_payload.size());
