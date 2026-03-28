@@ -485,7 +485,7 @@ public:
         // Gets noise message
         if (!fragmentation) {
             // Generates random value
-            if (number_handshake_parts == 3) {
+            if (number_handshake_parts == 2) {
                 noise_handshake_payload =
                     noheap::to_buffer<std::decay_t<decltype(noise_handshake_payload)>>(
                         noheap::get_random_bytes<
@@ -500,7 +500,7 @@ public:
             noise_ctx.set_handshake_message();
 
             // Adds ephemeral key obfuscation on ephemeral key
-            if (number_handshake_parts == 1) {
+            if (number_handshake_parts == 0) {
                 std::transform(noise_handshake_packet.begin(),
                                noise_handshake_packet.begin() + ephemeral_obfs_key.size(),
                                ephemeral_obfs_key.data(), noise_handshake_packet.begin(),
@@ -516,13 +516,13 @@ public:
         offset_noise_handshake_packet += payload_packet.buffer.size();
 
         // Determines type of payload data
-        if (number_handshake_parts == 1)
+        if (number_handshake_parts == 0)
             payload_packet.header.type =
                 transport_unit_type::payload_type::session_request;
-        else if (number_handshake_parts == 2)
+        else if (number_handshake_parts == 1)
             payload_packet.header.type =
                 transport_unit_type::payload_type::session_created;
-        else if (number_handshake_parts == 3)
+        else if (number_handshake_parts == 2)
             payload_packet.header.type =
                 transport_unit_type::payload_type::session_confirmed;
 
@@ -544,14 +544,16 @@ public:
         check_noise_action(noise::noise_action::READ_MESSAGE);
 
         auto &payload_packet = pckt->packets[0];
+        if (payload_packet.header.flag == decltype(payload_packet.header.flag)::drop)
+            throw noheap::runtime_error("Noise handshake dropped.");
 
         // Determines size of payload data
         std::size_t payload_data_size;
-        if (number_handshake_parts == 1)
+        if (number_handshake_parts == 0)
             payload_data_size = config_type::hs1_size;
-        else if (number_handshake_parts == 2)
+        else if (number_handshake_parts == 1)
             payload_data_size = config_type::hs2_size;
-        else if (number_handshake_parts == 3)
+        else if (number_handshake_parts == 2)
             payload_data_size = config_type::hs3_size;
 
         // Copies accepted packet to buffer of noise handshake message
@@ -565,13 +567,13 @@ public:
                    == decltype(payload_packet.header.flag)::wait_next)
             return;
 
-        if (number_handshake_parts == 1)
+        if (number_handshake_parts == 0)
             // Deletes ephemeral key obfuscation
             std::transform(noise_handshake_packet.begin(),
                            noise_handshake_packet.begin() + ephemeral_obfs_key.size(),
                            ephemeral_obfs_key.begin(), noise_handshake_packet.begin(),
                            std::bit_xor{});
-        else if (number_handshake_parts == 3)
+        else if (number_handshake_parts == 2)
             // Sets buffer to get random value
             noise_ctx.get_handshake_payload_buffer().set(
                 {noise_handshake_payload.data(), noise_handshake_payload.size()}, 0);
@@ -592,33 +594,39 @@ public:
         return fragmentation ? noise::noise_action::WRITE_MESSAGE
                              : noise_ctx.get_action();
     }
-    auto get_handshake_hash() { return noise_ctx.get_handshake_hash(); }
-    auto get_handshake_payload() { return noise_handshake_payload; }
+    typename noise_context_type::buffer_handshake_payload_type get_handshake_payload() {
+        return noise_handshake_payload;
+    }
+    typename noise_context_type::hash_state::buffer_type get_handshake_hash() {
+        return noise_handshake_hash;
+    }
 
 public:
-    void init(noise::noise_role role, noise_context_type::prologue_extention_type &&ext,
-              noise_context_type::keypair_type                 &&local_keypair,
-              noise_context_type::dh_key_type                  &&remote_public_key,
-              typename noise_context_type::pre_shared_key_type &&pre_shared_key,
-              noise_context_type::dh_key_type                  &&_ephemeral_obfs_key) {
+    void init(noise::noise_role role, noise_context_type::prologue_extention_type ext,
+              const noise_context_type::keypair_type        &local_keypair,
+              const noise_context_type::dh_key_type         &remote_public_key,
+              const noise_context_type::pre_shared_key_type &pre_shared_key,
+              const noise_context_type::dh_key_type         &_ephemeral_obfs_key) {
         // Init noise context
         noise_ctx.init(role);
-        noise_ctx.set_prologue(std::move(ext));
+        noise_ctx.set_prologue(ext);
 
-        noise_ctx.set_local_keypair(std::move(local_keypair));
-        noise_ctx.set_remote_public_key(std::move(remote_public_key));
-        noise_ctx.set_pre_shared_key(std::move(pre_shared_key));
+        noise_ctx.set_local_keypair(local_keypair);
+        noise_ctx.set_remote_public_key(remote_public_key);
+        noise_ctx.set_pre_shared_key(pre_shared_key);
 
         noise_ctx.start();
 
-        ephemeral_obfs_key = std::move(_ephemeral_obfs_key);
+        ephemeral_obfs_key = _ephemeral_obfs_key;
 
-        number_handshake_parts        = 1;
+        number_handshake_parts        = 0;
         offset_noise_handshake_packet = 0;
         fragmentation                 = false;
     }
     noise_context_type::cipher_state dump() {
         noise_ctx.stop();
+
+        noise_handshake_hash  = noise_ctx.get_handshake_hash();
         auto cipher_state_tmp = noise_ctx.get_cipher_state();
         noise_ctx.dump();
 
@@ -630,6 +638,9 @@ private:
         auto action = noise_ctx.get_action();
         if (action == noise::noise_action::FAILED)
             throw noheap::runtime_error("Failed to handshake.");
+        else if (number_handshake_parts > 2)
+            throw noheap::runtime_error(
+                "Unexpected behaviour during the noise handshake.");
 
         if (action == expected)
             return;
@@ -646,12 +657,13 @@ private:
     noise_context_type noise_ctx;
     std::size_t        number_handshake_parts;
 
-    typename noise_context_type::buffer_handshake_payload_type noise_handshake_payload{};
-    typename noise_context_type::buffer_handshake_packet_type  noise_handshake_packet{};
+    typename noise_context_type::buffer_handshake_packet_type noise_handshake_packet{};
+    noise_context_type::dh_key_type                           ephemeral_obfs_key;
     std::size_t offset_noise_handshake_packet;
     bool        fragmentation;
 
-    noise_context_type::dh_key_type ephemeral_obfs_key;
+    typename noise_context_type::buffer_handshake_payload_type noise_handshake_payload;
+    typename noise_context_type::hash_state::buffer_type       noise_handshake_hash;
 };
 
 } // namespace essu

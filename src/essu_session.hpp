@@ -36,11 +36,10 @@ public:
 public:
     // Establishes connection with node(remote_addr): performs noise handshake
     void establish_connection(
-        noise::noise_role role, noise_context_type::prologue_extention_type &&ext,
-        noise_context_type::keypair_type &&local_keypair,
-        noise_context_type::dh_key_type  &&remote_public_key,
-
-        typename noise_context_type::pre_shared_key_type &&pre_shared_key);
+        noise::noise_role role, noise_context_type::prologue_extention_type ext,
+        const noise_context_type::keypair_type        &local_keypair,
+        const noise_context_type::dh_key_type         &remote_public_key,
+        const noise_context_type::pre_shared_key_type &pre_shared_key);
 
     template<network::Derived_from_action Action>
     void run_stream_session();
@@ -69,8 +68,8 @@ private:
         noise_context_type::dh_key_type       &ephemeral_obfs_key2);
 
     static void generate_pair_session_unique_value(
-        const noise_context_type::hash_state::buffer_hash_type &buffer_hash,
-        noise_context_type::buffer_handshake_payload_type     &&buffer_handshake_payload,
+        const noise_context_type::hash_state::buffer_type       &buffer_hash,
+        const noise_context_type::buffer_handshake_payload_type &buffer_handshake_payload,
         buffer_unique_value_type &output_value1, buffer_unique_value_type &output_value2);
 
 public:
@@ -103,15 +102,15 @@ essu_session::essu_session(address_type remote_addr, port_type port)
       udp_stream(port) {
 }
 void essu_session::establish_connection(
-    noise::noise_role role, noise_context_type::prologue_extention_type &&ext,
-    noise_context_type::keypair_type                 &&local_keypair,
-    noise_context_type::dh_key_type                  &&remote_public_key,
-    typename noise_context_type::pre_shared_key_type &&pre_shared_key) {
+    noise::noise_role role, noise_context_type::prologue_extention_type ext,
+    const noise_context_type::keypair_type        &local_keypair,
+    const noise_context_type::dh_key_type         &remote_public_key,
+    const noise_context_type::pre_shared_key_type &pre_shared_key) {
     wrapper_packet_type pckt{};
     const auto         &protocol = pckt.get_protocol();
 
-    decltype(buffer_remote_addr)     buffer_own_addr{};
-    decltype(buffer_hex_remote_addr) buffer_hex_own_addr{};
+    decltype(buffer_remote_addr)     buffer_own_addr;
+    decltype(buffer_hex_remote_addr) buffer_hex_own_addr;
 
     for (auto it = pckt->packets.begin() + 1; it < pckt->packets.end(); ++it)
         it->header.flag = decltype(it->header.flag)::drop;
@@ -339,8 +338,8 @@ void essu_session::generate_pair_ephemeral_obfs_key(
               keystream.end(), ephemeral_obfs_key2.begin());
 }
 void essu_session::generate_pair_session_unique_value(
-    const noise_context_type::hash_state::buffer_hash_type &buffer_hash,
-    noise_context_type::buffer_handshake_payload_type     &&buffer_handshake_payload,
+    const noise_context_type::hash_state::buffer_type       &buffer_hash,
+    const noise_context_type::buffer_handshake_payload_type &buffer_handshake_payload,
     buffer_unique_value_type &output_value1, buffer_unique_value_type &output_value2) {
     // Generates unique values
     std::decay_t<decltype(buffer_hash)> output_tmp1;

@@ -247,7 +247,7 @@ public:
         bool initialized_states = false;
     };
     struct hash_state {
-        using buffer_hash_type = buffer_type<64>;
+        using buffer_type = buffer_type<64>;
         static consteval hash_type get_hash_type() { return hash_type::BLAKE2b; }
 
     public:
@@ -261,7 +261,7 @@ public:
         ~hash_state();
 
     public:
-        buffer_hash_type get_hash(std::span<noheap::rbyte> buffer);
+        buffer_type get_hash(std::span<noheap::rbyte> buffer);
 
         void hkdf(std::span<const noheap::rbyte> buffer,
                   std::span<const noheap::rbyte> key, std::span<noheap::rbyte> output1,
@@ -299,10 +299,10 @@ public:
     void get_handshake_message();
 
 public:
-    void                         set_prologue(prologue_extention_type &&ext);
-    buffer_prologue_type         get_prologue();
-    dh_key_type                  get_remote_public_key();
-    hash_state::buffer_hash_type get_handshake_hash();
+    void                    set_prologue(prologue_extention_type ext);
+    buffer_prologue_type    get_prologue();
+    dh_key_type             get_remote_public_key();
+    hash_state::buffer_type get_handshake_hash();
 
     void set_local_keypair(const keypair_type &kp);
     void set_remote_public_key(const dh_key_type &key);
@@ -464,10 +464,10 @@ noise_context<_config>::hash_state::~hash_state() {
         handle_error(ret, "Failed to free hash state.");
 }
 template<noise_context_config _config>
-noise_context<_config>::hash_state::buffer_hash_type
+noise_context<_config>::hash_state::buffer_type
     noise_context<_config>::hash_state::get_hash(std::span<noheap::rbyte> buffer) {
-    buffer_hash_type buffer_tmp{};
-    std::size_t      ret;
+    decltype(get_hash(buffer)) buffer_tmp{};
+    std::size_t                ret;
     if ((ret = noise_hashstate_hash_one(
              hashstate, reinterpret_cast<noheap::ubyte *>(buffer.data()), buffer.size(),
              reinterpret_cast<noheap::ubyte *>(buffer_tmp.data()), buffer_tmp.size()))
@@ -594,7 +594,7 @@ void noise_context<_config>::get_handshake_message() {
 }
 
 template<noise_context_config _config>
-void noise_context<_config>::set_prologue(prologue_extention_type &&ext) {
+void noise_context<_config>::set_prologue(prologue_extention_type ext) {
     prologue.ext = std::move(ext);
 
     std::size_t ret;
@@ -623,7 +623,7 @@ noise_context<_config>::dh_key_type noise_context<_config>::get_remote_public_ke
     return buffer_tmp;
 }
 template<noise_context_config _config>
-noise_context<_config>::hash_state::buffer_hash_type
+noise_context<_config>::hash_state::buffer_type
     noise_context<_config>::get_handshake_hash() {
     decltype(get_handshake_hash()) buffer_hash{};
 
