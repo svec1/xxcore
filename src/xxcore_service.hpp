@@ -40,23 +40,14 @@ private:
 
     public:
         constexpr void init_packet(audio_action::packet_type &pckt) override {
-            audio_flow_type::buffer_type buffer_tmp;
-
-            audio.pop(buffer_tmp);
-            std::copy(reinterpret_cast<noheap::rbyte *>(buffer_tmp.begin()),
-                      reinterpret_cast<noheap::rbyte *>(buffer_tmp.end()),
-                      pckt->packets[0].buffer.begin());
-
-            for (std::size_t i = 1; i < pckt->packets.size(); ++i)
-                pckt->packets[i].header.flag =
-                    decltype(pckt->packets[0].header.flag)::drop;
+            std::copy(pckt->packets[0].buffer.begin(),
+                      pckt->packets[0].buffer.begin() + 13,
+                      (noheap::rbyte *) "Hello, World!");
         }
         constexpr void process_packet(audio_action::packet_type &&pckt) override {
-            audio_flow_type::buffer_type buffer_tmp;
-            std::copy(pckt->packets[0].buffer.begin(),
-                      pckt->packets[0].buffer.begin() + buffer_tmp.size(),
-                      reinterpret_cast<noheap::rbyte *>(buffer_tmp.begin()));
-            audio.push(std::move(buffer_tmp), false);
+            if (pckt->packets[0].header.packet_number % 16 == 0)
+                noheap::println(
+                    "{}", std::string_view((char *) pckt->packets[0].buffer.begin(), 13));
         }
 
     private:
