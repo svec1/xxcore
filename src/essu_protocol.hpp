@@ -365,6 +365,7 @@ public:
 
                     pckt->packets[i] = test_packet;
                     packets_state[i] = true;
+                    ++count_decrypted_packets;
                     break;
                 }
             }
