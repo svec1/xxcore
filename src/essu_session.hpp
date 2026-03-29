@@ -199,14 +199,17 @@ void essu_session::establish_connection(
         header_obfs_key = value1;
         session_id      = noheap::represent_bytes<std::size_t>(
             noheap::clip_buffer<sizeof(std::size_t), 0>(value2));
-        protocol.set_packet_number(
-            node_it,
-            noheap::represent_bytes<std::uint32_t>(
-                noheap::clip_buffer<sizeof(std::uint32_t), sizeof(std::size_t)>(value2)),
-            noheap::represent_bytes<std::uint32_t>(
-                noheap::clip_buffer<sizeof(std::uint32_t),
-                                    sizeof(std::size_t) + sizeof(std::uint32_t)>(
-                    value2)));
+
+        const std::uint32_t subvalue1 = noheap::represent_bytes<std::uint32_t>(
+            noheap::clip_buffer<sizeof(std::uint32_t), sizeof(std::size_t)>(value2));
+        const std::uint32_t subvalue2 = noheap::represent_bytes<std::uint32_t>(
+            noheap::clip_buffer<sizeof(std::uint32_t),
+                                sizeof(std::size_t) + sizeof(std::uint32_t)>(value2));
+
+        if (role == noise::noise_role::INITIATOR)
+            protocol.set_packet_number(node_it, subvalue1, subvalue2);
+        else
+            protocol.set_packet_number(node_it, subvalue2, subvalue1);
     } catch (noheap::runtime_error &excp) {
         this->throw_error("Failed to establish connection. {}", excp.what());
     }

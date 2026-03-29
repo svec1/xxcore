@@ -315,7 +315,7 @@ public:
             for (std::size_t possible_packet_number = node_info.receiver_packet_number;
                  possible_packet_number
                  < node_info.receiver_packet_number
-                       + noheap::buffer_size<decltype(pckt->packets)> + 1;
+                       + noheap::buffer_size<decltype(pckt->packets)> * 2 + 1;
                  ++possible_packet_number) {
                 for (std::size_t i = 0; i < pckt->packets.size(); ++i) {
                     if (packets_state[i])
@@ -362,11 +362,9 @@ public:
                             continue;
                         }
                     }
-                    noheap::println("{}", possible_packet_number);
 
                     pckt->packets[i] = test_packet;
                     packets_state[i] = true;
-                    ++count_decrypted_packets;
                     break;
                 }
             }
@@ -443,6 +441,7 @@ public:
 
         node_info.sender_packet_number   = _sender_packet_number;
         node_info.receiver_packet_number = _receiver_packet_number;
+        noheap::println("{}", _receiver_packet_number);
     }
 
 private:
