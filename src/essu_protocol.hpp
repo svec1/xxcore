@@ -188,9 +188,9 @@ public:
         }
 
     private:
-        status_type   status;
-        std::uint16_t sender_packet_number;
-        std::uint16_t receiver_packet_number;
+        status_type status;
+        std::size_t sender_packet_number;
+        std::size_t receiver_packet_number;
 
         typename noise_context_type::cipher_state *payload_cipher_state_p;
         const noise_context_type::dh_key_type     *header_obfs_key_p;
@@ -315,7 +315,7 @@ public:
             for (std::size_t possible_packet_number = node_info.receiver_packet_number;
                  possible_packet_number
                  < node_info.receiver_packet_number
-                       + noheap::buffer_size<decltype(pckt->packets)> * 8;
+                       + noheap::buffer_size<decltype(pckt->packets)> + 1;
                  ++possible_packet_number) {
                 for (std::size_t i = 0; i < pckt->packets.size(); ++i) {
                     if (packets_state[i])
@@ -362,6 +362,7 @@ public:
                             continue;
                         }
                     }
+                    noheap::println("{}", possible_packet_number);
 
                     pckt->packets[i] = test_packet;
                     packets_state[i] = true;
@@ -370,8 +371,12 @@ public:
                 }
             }
 
-            if (count_decrypted_packets != pckt->packets.size())
+            // If it was not possible to decrypt all packets in batch
+            if (count_decrypted_packets != pckt->packets.size()) {
+                node_info.receiver_packet_number +=
+                    noheap::buffer_size<decltype(pckt->packets)>;
                 return;
+            }
 
             // Restores order of packets in batch
             std::sort(pckt->packets.begin(), pckt->packets.end(),
@@ -429,16 +434,15 @@ public:
             node_info_type::status_type::HS1;
     }
     void set_packet_number(node_info_s_type::const_iterator it,
-                           std::uint32_t                    packet_number) const {
+                           std::uint32_t                    _sender_packet_number,
+                           std::uint32_t _receiver_packet_number) const {
         if (it == node_info_s.end())
             throw noheap::runtime_error(this->buffer_owner, "Iterator is null.");
 
-        auto node_info = const_cast<node_info_type &>(it->second);
+        auto &node_info = const_cast<node_info_type &>(it->second);
 
-        noheap::println("{}", packet_number);
-
-        node_info.sender_packet_number   = packet_number;
-        node_info.receiver_packet_number = packet_number;
+        node_info.sender_packet_number   = _sender_packet_number;
+        node_info.receiver_packet_number = _receiver_packet_number;
     }
 
 private:
