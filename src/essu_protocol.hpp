@@ -310,12 +310,12 @@ public:
                 const_cast<decltype(node_info_it->second) &>(node_info_it->second);
 
             // Selects possible packet number
-            bool packet_decrypted = false;
+            std::size_t count_decrypted_packets = 0;
             for (std::size_t possible_packet_number = node_info.receiver_packet_number;
                  possible_packet_number
                  < node_info.receiver_packet_number + number_packets_window;
                  ++possible_packet_number) {
-                packet_decrypted = false;
+                bool packet_decrypted = false;
                 for (std::size_t i = 0; i < pckt->packets.size(); ++i) {
                     transport_unit_type test_packet = pckt->packets[i];
 
@@ -362,20 +362,21 @@ public:
 
                     pckt->packets[i] = test_packet;
                     packet_decrypted = true;
+                    ++count_decrypted_packets;
                     break;
                 }
 
-                if (!packet_decrypted)
+                if (!packet_decrypted || count_decrypted_packets == pckt->packets.size())
                     break;
             }
 
             // If it was not possible to decrypt all packets in batch
-            if (!packet_decrypted) {
+            if (count_decrypted_packets != pckt->packets.size()) {
                 node_info.receiver_packet_number += number_packets_window;
                 return;
             }
 
-            node_info.receiver_packet_number +=
+            node_info.receiver_packet_number =
                 pckt->packets[pckt->packets.size() - 1].header.packet_number;
 
             // Restores order of packets in batch
