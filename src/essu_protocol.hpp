@@ -9,7 +9,7 @@
 namespace essu {
 
 static constexpr std::size_t packet_size      = 340;
-static constexpr std::size_t header_data_size = 8;
+static constexpr std::size_t header_data_size = 16;
 static constexpr std::size_t buffer_data_size = packet_size - header_data_size;
 
 static constexpr std::size_t batch_packets_count = 4;
@@ -106,11 +106,12 @@ public:
 
 public:
     struct header_data_type {
-        std::uint16_t destination_id;
-        std::uint16_t source_id;
-        std::uint16_t packet_number;
-        flag_type     flag;
-        payload_type  type;
+        std::size_t packet_number;
+
+        noheap::buffer_bytes_type<6> reserved;
+
+        flag_type    flag;
+        payload_type type;
     };
 
 public:
@@ -307,18 +308,19 @@ public:
             auto &node_info =
                 const_cast<decltype(node_info_it->second) &>(node_info_it->second);
 
-            for (std::size_t i = 0; i < pckt->packets.size(); ++i) {
-                auto &packet_tmp = pckt->packets[i];
-
-                // Selects possible packet number
-                bool was_matched = false;
-                for (std::size_t possible_packet_number =
-                         node_info.receiver_packet_number;
-                     possible_packet_number
-                     < node_info.receiver_packet_number
-                           + sizeof(packet_tmp.header.packet_number) * 8;
-                     ++possible_packet_number) {
-                    transport_unit_type test_packet = packet_tmp;
+            // Selects possible packet number
+            std::size_t count_decrypted_packets = 0;
+            noheap::buffer_type<bool, noheap::buffer_size<decltype(pckt->packets)>>
+                packets_state{false};
+            for (std::size_t possible_packet_number = node_info.receiver_packet_number;
+                 possible_packet_number
+                 < node_info.receiver_packet_number
+                       + noheap::buffer_size<decltype(pckt->packets)> * 8;
+                 ++possible_packet_number) {
+                for (std::size_t i = 0; i < pckt->packets.size(); ++i) {
+                    if (packets_state[i])
+                        continue;
+                    transport_unit_type test_packet = pckt->packets[i];
 
                     // Generates header obfuscation key based on the packet_number
                     noise::buffer_type<sizeof(test_packet.header)> obfs_key_tmp{};
@@ -332,7 +334,7 @@ public:
                     // Deletes header data obfuscation
                     std::transform(reinterpret_cast<noheap::rbyte *>(&test_packet.header),
                                    reinterpret_cast<noheap::rbyte *>(&test_packet.header)
-                                       + sizeof(packet_tmp.header),
+                                       + sizeof(test_packet.header),
                                    obfs_key_tmp.data(),
                                    reinterpret_cast<noheap::rbyte *>(&test_packet.header),
                                    std::bit_xor{});
@@ -340,7 +342,7 @@ public:
                     if (test_packet.header.packet_number != possible_packet_number)
                         continue;
 
-                    if (packet_tmp.header.type
+                    if (test_packet.header.type
                         == transport_unit_type::payload_type::data) {
                         if (!node_info.payload_cipher_state_p)
                             throw noheap::runtime_error(
@@ -361,17 +363,15 @@ public:
                         }
                     }
 
-                    packet_tmp  = test_packet;
-                    was_matched = true;
+                    pckt->packets[i] = test_packet;
+                    packets_state[i] = true;
+                    ++count_decrypted_packets;
                     break;
                 }
-
-                if (!was_matched)
-                    packet_tmp.header.flag = transport_unit_type::flag_type::drop;
-
-                if (packet_tmp.header.flag == transport_unit_type::flag_type::drop)
-                    continue;
             }
+
+            if (count_decrypted_packets != pckt->packets.size())
+                return;
 
             // Restores order of packets in batch
             std::sort(pckt->packets.begin(), pckt->packets.end(),
@@ -434,6 +434,8 @@ public:
             throw noheap::runtime_error(this->buffer_owner, "Iterator is null.");
 
         auto node_info = const_cast<node_info_type &>(it->second);
+
+        noheap::println("{}", packet_number);
 
         node_info.sender_packet_number   = packet_number;
         node_info.receiver_packet_number = packet_number;
