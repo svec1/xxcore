@@ -12,7 +12,8 @@ static constexpr std::size_t packet_size      = 340;
 static constexpr std::size_t header_data_size = 16;
 static constexpr std::size_t buffer_data_size = packet_size - header_data_size;
 
-static constexpr std::size_t batch_packets_count = 4;
+static constexpr std::size_t batch_packets_count   = 4;
+static constexpr std::size_t number_packets_window = 64; // 16 batch
 
 template<noise::noise_pattern _pattern, noise::ecdh_type _ecdh,
          std::size_t _payload_data_size>
@@ -93,10 +94,10 @@ public:
         session_request = 0,
         session_created,
         session_confirmed,
-        data,
         retry,
         token_request,
         hole_punch,
+        data,
     };
     enum class flag_type : noheap::ubyte {
         none = 0,
@@ -309,17 +310,13 @@ public:
                 const_cast<decltype(node_info_it->second) &>(node_info_it->second);
 
             // Selects possible packet number
-            std::size_t count_decrypted_packets = 0;
-            noheap::buffer_type<bool, noheap::buffer_size<decltype(pckt->packets)>>
-                packets_state{false};
+            bool packet_decrypted = false;
             for (std::size_t possible_packet_number = node_info.receiver_packet_number;
                  possible_packet_number
-                 < node_info.receiver_packet_number
-                       + noheap::buffer_size<decltype(pckt->packets)> * 2 + 1;
+                 < node_info.receiver_packet_number + number_packets_window;
                  ++possible_packet_number) {
+                packet_decrypted = false;
                 for (std::size_t i = 0; i < pckt->packets.size(); ++i) {
-                    if (packets_state[i])
-                        continue;
                     transport_unit_type test_packet = pckt->packets[i];
 
                     // Generates header obfuscation key based on the packet_number
@@ -364,18 +361,22 @@ public:
                     }
 
                     pckt->packets[i] = test_packet;
-                    packets_state[i] = true;
-                    ++count_decrypted_packets;
+                    packet_decrypted = true;
                     break;
                 }
+
+                if (!packet_decrypted)
+                    break;
             }
 
             // If it was not possible to decrypt all packets in batch
-            if (count_decrypted_packets != pckt->packets.size()) {
-                node_info.receiver_packet_number +=
-                    noheap::buffer_size<decltype(pckt->packets)>;
+            if (!packet_decrypted) {
+                node_info.receiver_packet_number += number_packets_window;
                 return;
             }
+
+            node_info.receiver_packet_number +=
+                pckt->packets[pckt->packets.size() - 1].header.packet_number;
 
             // Restores order of packets in batch
             std::sort(pckt->packets.begin(), pckt->packets.end(),
@@ -385,9 +386,6 @@ public:
                       });
 
             update_protocol_status(node_info, pckt->packets[0]);
-
-            node_info.receiver_packet_number =
-                pckt->packets[pckt->packets.size() - 1].header.packet_number;
 
             callback(std::move(pckt));
         } catch (noheap::runtime_error &excp) {
@@ -442,7 +440,6 @@ public:
 
         node_info.sender_packet_number   = _sender_packet_number;
         node_info.receiver_packet_number = _receiver_packet_number;
-        noheap::println("{}", _receiver_packet_number);
     }
 
 private:

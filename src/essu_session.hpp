@@ -46,9 +46,9 @@ public:
 
 private:
     template<typename... Args>
-    void message(std::format_string<Args...> format = "", Args &&...args);
+    void message(std::format_string<Args...> format, Args &&...args);
     template<typename... Args>
-    void throw_error(std::format_string<Args...> format = "", Args &&...args);
+    void throw_error(std::format_string<Args...> format, Args &&...args);
 
 private:
     template<network::Net_stream_udp TStream>
@@ -68,7 +68,7 @@ private:
         noise_context_type::dh_key_type       &ephemeral_obfs_key2);
 
     static void generate_pair_session_unique_value(
-        const noise_context_type::hash_state::buffer_type       &buffer_hash,
+        const noise_context_type::hash_state::buffer_type       &buffer_handshake_hash,
         const noise_context_type::buffer_handshake_payload_type &buffer_handshake_payload,
         buffer_unique_value_type &output_value1, buffer_unique_value_type &output_value2);
 
@@ -345,13 +345,13 @@ void essu_session::generate_pair_ephemeral_obfs_key(
               keystream.end(), ephemeral_obfs_key2.begin());
 }
 void essu_session::generate_pair_session_unique_value(
-    const noise_context_type::hash_state::buffer_type       &buffer_hash,
+    const noise_context_type::hash_state::buffer_type       &buffer_handshake_hash,
     const noise_context_type::buffer_handshake_payload_type &buffer_handshake_payload,
     buffer_unique_value_type &output_value1, buffer_unique_value_type &output_value2) {
     // Generates unique values
-    std::decay_t<decltype(buffer_hash)> output_tmp1;
+    std::decay_t<decltype(buffer_handshake_hash)> output_tmp1;
     typename noise_context_type::hash_state{}.hkdf(
-        {buffer_hash.data(), buffer_hash.size()},
+        {buffer_handshake_hash.data(), buffer_handshake_hash.size()},
         {buffer_handshake_payload.data(), buffer_handshake_payload.size()},
         {output_tmp1.data(), output_tmp1.size()},
         {output_value2.data(), output_value2.size()});
