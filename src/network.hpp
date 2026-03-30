@@ -146,45 +146,6 @@ protected:
     static constexpr log_handler log{buffer_owner};
 };
 
-struct debug_extention {
-    struct extention_data_type {
-        std::size_t mark_time;
-    };
-
-public:
-    using packet_type = packet_native_type<extention_data_type>;
-
-    struct protocol_type
-        : public protocol_native_type<packet_type,
-                                      noheap::log_impl::create_owner("DEBUG_PROTOCOL")> {
-        constexpr void prepare(packet_type &pckt, buffer_address_type addr,
-                               callback_prepare_type callback) const override {
-            callback(pckt);
-
-            pckt->mark_time = get_now_ms();
-        }
-        constexpr void handle(packet_type &pckt, buffer_address_type addr,
-                              callback_handle_type callback) const override {
-            static std::size_t count_accepted = 0;
-            static std::size_t during         = get_now_ms();
-
-            std::size_t now = get_now_ms();
-
-            ++count_accepted;
-            if (now - during > 1000) {
-                this->log.template to_all<log_handler::output_type::async>(
-                    "Was recieved last packet {} "
-                    "ms({} packet/s.)",
-                    now - pckt->mark_time, count_accepted);
-                during         = now;
-                count_accepted = 0;
-            }
-
-            callback(std::move(pckt));
-        }
-    };
-};
-
 template<Packet_native_t TPacket_internal, Derived_from_protocol_native_t TProtocol>
     requires std::same_as<TPacket_internal, typename TProtocol::packet_type>
 class wrapper_packet final : public TPacket_internal {
@@ -223,9 +184,6 @@ concept Compatible_wrapper_packet_with_action =
     Wrapper_packet<TPacket> && Derived_from_action<TAction>
     && std::same_as<typename std::decay_t<TAction>::packet_type,
                     typename std::decay_t<TPacket>::packet_type>;
-
-using debug_packet = wrapper_packet<typename debug_extention::packet_type,
-                                    typename debug_extention::protocol_type>;
 
 template<Derived_from_action Action, ipv _v>
 class net_stream_udp;

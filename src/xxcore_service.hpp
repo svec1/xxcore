@@ -13,7 +13,7 @@ using namespace boost;
 
 class xxcore_service {
 public:
-    static constexpr std::size_t max_size_config = 4096;
+    static constexpr std::size_t max_size_config = BOOST_JSON_STACK_BUFFER_SIZE;
     using buffer_config_type = noheap::buffer_type<char, max_size_config>;
 
     using noise_context_type = essu_session::noise_context_type;
@@ -32,22 +32,25 @@ private:
     };
 
     // For test
-    struct audio_action final
+    struct test_action final
         : network::action<essu_session::wrapper_packet_type::packet_type> {
         static constexpr std::size_t max_stream_size = 32;
 
         using audio_flow_type = audio_flow<max_stream_size>;
 
     public:
-        constexpr void init_packet(audio_action::packet_type &pckt) override {
-            std::copy(pckt->packets[0].buffer.begin(),
-                      pckt->packets[0].buffer.begin() + 13,
-                      (noheap::rbyte *) "Hello, World!");
+        constexpr void init_packet(test_action::packet_type &pckt) override {
+            static constexpr std::string_view v = "Hello, World!";
+
+            pckt->units[0].header.type = decltype(pckt->units[0].header.type)::data;
+            std::copy(v.begin(), v.end(),
+                      reinterpret_cast<char *>(pckt->units[0].buffer.begin()));
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        constexpr void process_packet(audio_action::packet_type &&pckt) override {
-            if (pckt->packets[0].header.packet_number % 16 == 0)
-                noheap::println(
-                    "{}", std::string_view((char *) pckt->packets[0].buffer.begin(), 13));
+        constexpr void process_packet(test_action::packet_type &&pckt) override {
+            noheap::println("{}",
+                            std::string_view((char *) pckt->units[0].buffer.begin(), 13));
         }
 
     private:
@@ -82,7 +85,7 @@ void xxcore_service::run() {
     stream.establish_connection(
         config.role, {}, {config.local_private_key, config.local_public_key},
         std::move(config.remote_public_key), std::move(config.pre_shared_key));
-    stream.run_stream_session<audio_action>();
+    stream.run_stream_session<test_action>();
 }
 
 void xxcore_service::configurate(buffer_config_type &buffer, bool generate_new_keypair) {
@@ -95,8 +98,8 @@ void xxcore_service::configurate(buffer_config_type &buffer, bool generate_new_k
         static constexpr std::string_view remote_public_string = "r_pubk";
         static constexpr std::string_view pre_shared_string    = "psk";
 
-        noheap::buffer_bytes_type<8192, noheap::ubyte> json_buffer_tmp;
-        noheap::buffer_bytes_type<1024>                buffer_tmp{};
+        noheap::buffer_bytes_type<BOOST_JSON_STACK_BUFFER_SIZE, noheap::ubyte>
+            json_buffer_tmp;
 
         json::static_resource json_mr(json_buffer_tmp.data(), json_buffer_tmp.size());
 

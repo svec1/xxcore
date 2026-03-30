@@ -10,13 +10,11 @@ class essu_session {
     static constexpr noise::noise_pattern pattern = noise::noise_pattern::XK;
     static constexpr noise::ecdh_type     ecdh    = noise::ecdh_type::x25519;
 
-    using config_type = essu::transport_data_config_type<
-        pattern, ecdh, essu::decoy_transport_data_type::get_buffer_size_without_mac()>;
+    using config_type = essu::unit_config_type<pattern, ecdh, 280>;
 
 public:
-    using wrapper_packet_type =
-        network::wrapper_packet<essu::transport_packet_type<config_type>,
-                                essu::transport_protocol_type<config_type>>;
+    using wrapper_packet_type = network::wrapper_packet<essu::packet_type<config_type>,
+                                                        essu::protocol_type<config_type>>;
 
 public:
     using noise_handshake_action = essu::noise_handshake_action<config_type>;
@@ -112,7 +110,7 @@ void essu_session::establish_connection(
     decltype(buffer_remote_addr)     buffer_own_addr;
     decltype(buffer_hex_remote_addr) buffer_hex_own_addr;
 
-    for (auto it = pckt->packets.begin() + 1; it < pckt->packets.end(); ++it)
+    for (auto it = pckt->units.begin() + 1; it < pckt->units.end(); ++it)
         it->header.flag = decltype(it->header.flag)::drop;
 
     auto node_it = protocol.create_node_info(buffer_remote_addr, payload_cipher_state,
@@ -127,22 +125,22 @@ void essu_session::establish_connection(
         if (role == noise::noise_role::INITIATOR) {
             std::copy(reinterpret_cast<noheap::rbyte *>(buffer_remote_addr.begin()),
                       reinterpret_cast<noheap::rbyte *>(buffer_remote_addr.end()),
-                      pckt->packets[0].buffer.begin());
+                      pckt->units[0].buffer.begin());
             node_send(udp_stream, pckt, node_it);
 
             node_receive(udp_stream, pckt, node_it);
-            std::copy(pckt->packets[0].buffer.begin(),
-                      pckt->packets[0].buffer.begin() + buffer_own_addr.size(),
+            std::copy(pckt->units[0].buffer.begin(),
+                      pckt->units[0].buffer.begin() + buffer_own_addr.size(),
                       reinterpret_cast<noheap::rbyte *>(buffer_own_addr.begin()));
         } else {
             node_receive(udp_stream, pckt, node_it);
-            std::copy(pckt->packets[0].buffer.begin(),
-                      pckt->packets[0].buffer.begin() + buffer_own_addr.size(),
+            std::copy(pckt->units[0].buffer.begin(),
+                      pckt->units[0].buffer.begin() + buffer_own_addr.size(),
                       reinterpret_cast<noheap::rbyte *>(buffer_own_addr.begin()));
 
             std::copy(reinterpret_cast<noheap::rbyte *>(buffer_remote_addr.begin()),
                       reinterpret_cast<noheap::rbyte *>(buffer_remote_addr.end()),
-                      pckt->packets[0].buffer.begin());
+                      pckt->units[0].buffer.begin());
             node_send(udp_stream, pckt, node_it);
         }
 
@@ -207,9 +205,9 @@ void essu_session::establish_connection(
                                 sizeof(std::size_t) + sizeof(std::uint32_t)>(value2));
 
         if (role == noise::noise_role::INITIATOR)
-            protocol.set_packet_number(node_it, subvalue1, subvalue2);
+            protocol.set_initial_unit_number(node_it, subvalue1, subvalue2);
         else
-            protocol.set_packet_number(node_it, subvalue2, subvalue1);
+            protocol.set_initial_unit_number(node_it, subvalue2, subvalue1);
     } catch (noheap::runtime_error &excp) {
         this->throw_error("Failed to establish connection. {}", excp.what());
     }

@@ -39,6 +39,11 @@ enum class ecdh_type : std::uint16_t {
     x448_hybrid_kyber1024   = NOISE_DH_CURVE448 ^ NOISE_DH_KYBER1024
 };
 
+enum class cipher_type : std::uint16_t {
+    UNKNOWN    = 0,
+    CHACHAPOLY = NOISE_CIPHER_CHACHAPOLY,
+};
+
 enum class hash_type : std::uint16_t {
     UNKNOWN = 0,
     BLAKE2b = NOISE_HASH_BLAKE2b,
@@ -102,13 +107,31 @@ consteval std::size_t get_kem_cipher_text_size() {
         return 0;
 }
 
+template<cipher_type cipher>
+consteval std::size_t get_mac_size() {
+    if constexpr (cipher == cipher_type::CHACHAPOLY)
+        return 16;
+    else
+        static_assert(false, "The passed cipher type is not supported.");
+}
+
+template<hash_type hash>
+consteval std::size_t get_hash_size() {
+    if constexpr (hash == hash_type::BLAKE2b)
+        return 64;
+    else
+        static_assert(false, "The passed hash type is not supported.");
+}
+
 template<std::size_t size>
 using buffer_type = noheap::buffer_bytes_type<size, noheap::rbyte>;
 
 template<noise::noise_pattern _pattern, noise::ecdh_type _ecdh>
 struct noise_context_config {
-    static constexpr noise::noise_pattern pattern = _pattern;
-    static constexpr noise::ecdh_type     ecdh    = _ecdh;
+    static constexpr noise_pattern pattern = _pattern;
+    static constexpr ecdh_type     ecdh    = _ecdh;
+    static constexpr cipher_type   cipher  = cipher_type::CHACHAPOLY;
+    static constexpr hash_type     hash    = hash_type::BLAKE2b;
 
 private:
     static_assert(noise::pattern_ecdh_is_compatible<pattern, ecdh>(),
@@ -133,24 +156,19 @@ private:
         .prefix_id  = NOISE_PREFIX_PSK,
         .pattern_id = static_cast<std::uint16_t>(config.pattern),
         .dh_id      = static_cast<std::uint16_t>(ecdh),
-        .cipher_id  = NOISE_CIPHER_CHACHAPOLY,
-        .hash_id    = NOISE_HASH_BLAKE2b,
+        .cipher_id  = static_cast<std::uint16_t>(config.cipher),
+        .hash_id    = static_cast<std::uint16_t>(config.hash),
         .hybrid_id  = hybrid_kyber1024 ? NOISE_DH_KYBER1024 : NOISE_DH_NONE,
     };
 
-private:
-    static constexpr noheap::log_impl::owner_impl::buffer_type buffer_owner =
-        noheap::log_impl::create_owner("NOISE_CONTEXT");
-    static constexpr log_handler log{buffer_owner};
-
 public:
-    static constexpr std::size_t mac_size                = 16;
     static constexpr std::size_t max_buffer_name_id_size = 64;
     static constexpr std::size_t handshake_packet_size   = 2048;
     static constexpr std::size_t handshake_payload_size  = 32;
     static constexpr std::size_t prologue_extention_size = 16;
     static constexpr std::size_t pre_shared_key_size     = 32;
     static constexpr std::size_t dh_key_size             = get_dh_key_size<ecdh>();
+    static constexpr std::size_t mac_size                = get_mac_size<config.cipher>();
 
     using buffer_handshake_packet_type =
         noheap::buffer_bytes_type<handshake_packet_size, noheap::rbyte>;
@@ -246,9 +264,10 @@ public:
 
         bool initialized_states = false;
     };
+
     struct hash_state {
-        using buffer_type = buffer_type<64>;
-        static consteval hash_type get_hash_type() { return hash_type::BLAKE2b; }
+        static constexpr hash_type hash = hash_type::BLAKE2b;
+        using buffer_type               = buffer_type<get_hash_size<hash>()>;
 
     public:
         hash_state();
@@ -314,6 +333,11 @@ public:
 
 private:
     static void handle_error(std::size_t error, std::string_view extention_error);
+
+private:
+    static constexpr noheap::log_impl::owner_impl::buffer_type buffer_owner =
+        noheap::log_impl::create_owner("NOISE_CONTEXT");
+    static constexpr log_handler log{buffer_owner};
 
 private:
     NoiseHandshakeState *handshakestate = nullptr;
@@ -442,8 +466,7 @@ void noise_context<_config>::cipher_state::dump_states() {
 template<noise_context_config _config>
 noise_context<_config>::hash_state::hash_state() {
     std::size_t ret;
-    if ((ret = noise_hashstate_new_by_id(&hashstate,
-                                         static_cast<std::uint16_t>(get_hash_type())))
+    if ((ret = noise_hashstate_new_by_id(&hashstate, static_cast<std::uint16_t>(hash)))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to init hash state.");
 }
