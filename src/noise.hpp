@@ -242,7 +242,8 @@ public:
         void decrypt(std::span<noheap::rbyte> buffer_ad);
         void pad();
 
-        void set_nonce(std::uint64_t nonce);
+        void set_encrypt_nonce(std::uint64_t nonce);
+        void set_decrypt_nonce(std::uint64_t nonce);
         void set_key(const dh_key_type &key);
 
     private:
@@ -411,11 +412,18 @@ void noise_context<_config>::cipher_state::pad() {
         handle_error(ret, "Failed to pad.");
 }
 template<noise_context_config _config>
-void noise_context<_config>::cipher_state::set_nonce(std::uint64_t nonce) {
+void noise_context<_config>::cipher_state::set_encrypt_nonce(std::uint64_t nonce) {
+    check_completed_handshake();
+    std::size_t ret;
+    if ((ret = noise_cipherstate_set_nonce(encrypt_state, nonce)) != NOISE_ERROR_NONE)
+        handle_error(ret, "Failed to set encrypting nonce.");
+}
+template<noise_context_config _config>
+void noise_context<_config>::cipher_state::set_decrypt_nonce(std::uint64_t nonce) {
     check_completed_handshake();
     std::size_t ret;
     if ((ret = noise_cipherstate_set_nonce(decrypt_state, nonce)) != NOISE_ERROR_NONE)
-        handle_error(ret, "Failed to set nonce.");
+        handle_error(ret, "Failed to set decrypting nonce.");
 }
 template<noise_context_config _config>
 void noise_context<_config>::cipher_state::set_key(const dh_key_type &key) {

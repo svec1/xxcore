@@ -249,7 +249,8 @@ public:
                     node_info.payload_cipher_state_p->input_buffer.set(
                         {unit.buffer.data(), unit.buffer.size()},
                         unit.get_buffer_size_without_mac());
-                    node_info.payload_cipher_state_p->set_nonce(unit.header.unit_number);
+                    node_info.payload_cipher_state_p->set_encrypt_nonce(
+                        unit.header.unit_number);
                     node_info.payload_cipher_state_p->encrypt(
                         {reinterpret_cast<noheap::rbyte *>(&unit.header),
                          sizeof(unit.header)});
@@ -330,7 +331,7 @@ public:
                         node_info.payload_cipher_state_p->output_buffer.set(
                             {test_unit.buffer.data(), test_unit.buffer.size()},
                             test_unit.buffer.size());
-                        node_info.payload_cipher_state_p->set_nonce(
+                        node_info.payload_cipher_state_p->set_decrypt_nonce(
                             test_unit.header.unit_number);
                         try {
                             node_info.payload_cipher_state_p->decrypt(
