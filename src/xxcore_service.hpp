@@ -39,22 +39,23 @@ private:
 
     public:
         constexpr void init_packet(test_action::packet_type &pckt) override {
-            static constexpr std::string_view v = "Hello, World!";
-            pckt->units[0].buffer               = {};
+            audio_flow_type::buffer_type buffer_tmp;
+            audio.pop(buffer_tmp);
             pckt->units[0].header.type = decltype(pckt->units[0].header.type)::data;
-            pckt->units[0].header.flag = decltype(pckt->units[0].header.flag)::none;
-            for (auto it = pckt->units.begin() + 1; it < pckt->units.end(); ++it) {
-                it->header.type = decltype(pckt->units[0].header.type)::data;
-                it->header.flag = decltype(pckt->units[0].header.flag)::drop;
+            std::copy(reinterpret_cast<noheap::rbyte *>(buffer_tmp.begin()),
+                      reinterpret_cast<noheap::rbyte *>(buffer_tmp.end()),
+                      pckt->units[0].buffer.begin());
+            for (std::size_t i = 1; i < pckt->units.size(); ++i) {
+                pckt->units[i].header.type = decltype(pckt->units[0].header.type)::data;
+                pckt->units[i].header.flag = decltype(pckt->units[0].header.flag)::drop;
             }
-            std::copy(v.begin(), v.end(),
-                      reinterpret_cast<char *>(pckt->units[0].buffer.begin()));
-
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         constexpr void process_packet(test_action::packet_type &&pckt) override {
-            noheap::println("{} ALL",
-                            std::string_view(noheap::hex_encode(pckt->units[0].buffer)));
+            audio_flow_type::buffer_type buffer_tmp;
+            std::copy(pckt->units[0].buffer.begin(),
+                      pckt->units[0].buffer.begin() + buffer_tmp.size(),
+                      reinterpret_cast<noheap::rbyte *>(buffer_tmp.begin()));
+            audio.push(std::move(buffer_tmp), false);
         }
 
     private:

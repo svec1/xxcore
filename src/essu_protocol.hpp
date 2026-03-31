@@ -271,6 +271,7 @@ public:
                     obfs_key_tmp.data(), reinterpret_cast<noheap::rbyte *>(&unit.header),
                     std::bit_xor{});
             }
+            // Performs rekey for encryption
             if (session_info.payload_cipher_state.valid())
                 session_info.payload_cipher_state.rekey_encrypt();
 
@@ -346,11 +347,14 @@ public:
                     ++count_decrypted_units;
                     break;
                 }
+
+                // Performs rekey for decryption
                 if (std::size_t diff =
                         possible_unit_number - session_info.receiver_unit_number;
                     session_info.payload_cipher_state.valid() && diff != 0
                     && (diff + 1) % 4 == 0)
                     session_info.payload_cipher_state.rekey_decrypt();
+
                 if (count_decrypted_units == pckt->units.size())
                     break;
             }
