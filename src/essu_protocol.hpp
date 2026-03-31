@@ -349,16 +349,15 @@ public:
                 if (std::size_t diff =
                         possible_unit_number - session_info.receiver_unit_number;
                     session_info.payload_cipher_state.valid() && diff != 0
-                    && diff % 4 == 0)
+                    && (diff + 1) % 4 == 0)
                     session_info.payload_cipher_state.rekey_decrypt();
-
                 if (count_decrypted_units == pckt->units.size())
                     break;
             }
 
             // If it was not possible to decrypt all units in batch
             if (count_decrypted_units != pckt->units.size())
-                throw noheap::runtime_error("Failed to decrypt packet.{}",
+                throw noheap::runtime_error("Failed to decrypt packet: {} units",
                                             count_decrypted_units);
 
             // Restores order of units in batch
@@ -367,7 +366,6 @@ public:
                           return el_left.header.unit_number < el_right.header.unit_number;
                       });
 
-            session_info.payload_cipher_state.rekey_decrypt();
             session_info.receiver_unit_number =
                 pckt->units[pckt->units.size() - 1].header.unit_number + 1;
 
