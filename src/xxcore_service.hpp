@@ -5,7 +5,6 @@
 #include <boost/json/src.hpp>
 
 #include "audio_flow.hpp"
-#include "crypto.hpp"
 #include "essu_session.hpp"
 #include "stream_audio.hpp"
 
@@ -41,16 +40,21 @@ private:
     public:
         constexpr void init_packet(test_action::packet_type &pckt) override {
             static constexpr std::string_view v = "Hello, World!";
-
+            pckt->units[0].buffer               = {};
             pckt->units[0].header.type = decltype(pckt->units[0].header.type)::data;
+            pckt->units[0].header.flag = decltype(pckt->units[0].header.flag)::none;
+            for (auto it = pckt->units.begin() + 1; it < pckt->units.end(); ++it) {
+                it->header.type = decltype(pckt->units[0].header.type)::data;
+                it->header.flag = decltype(pckt->units[0].header.flag)::drop;
+            }
             std::copy(v.begin(), v.end(),
                       reinterpret_cast<char *>(pckt->units[0].buffer.begin()));
 
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         constexpr void process_packet(test_action::packet_type &&pckt) override {
-            noheap::println("{}",
-                            std::string_view((char *) pckt->units[0].buffer.begin(), 13));
+            noheap::println("{} ALL",
+                            std::string_view(noheap::hex_encode(pckt->units[0].buffer)));
         }
 
     private:

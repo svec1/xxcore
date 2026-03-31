@@ -241,6 +241,8 @@ public:
         void encrypt(std::span<noheap::rbyte> buffer_ad);
         void decrypt(std::span<noheap::rbyte> buffer_ad);
         void pad();
+        void rekey_encrypt();
+        void rekey_decrypt();
 
         void set_encrypt_nonce(std::uint64_t nonce);
         void set_decrypt_nonce(std::uint64_t nonce);
@@ -353,7 +355,8 @@ private:
 template<noise_context_config _config>
 noise_context<_config>::cipher_state::cipher_state() {
     std::size_t ret;
-    if ((ret = noise_cipherstate_new_by_id(&encrypt_state, NOISE_CIPHER_CHACHAPOLY))
+    if ((ret = noise_cipherstate_new_by_id(&encrypt_state,
+                                           static_cast<std::uint16_t>(config.cipher)))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to init cipher state.");
     if ((ret = noise_randstate_new(&randstate)) != NOISE_ERROR_NONE)
@@ -410,6 +413,18 @@ void noise_context<_config>::cipher_state::pad() {
                                    noise_buffer.max_size, NOISE_PADDING_RANDOM))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to pad.");
+}
+template<noise_context_config _config>
+void noise_context<_config>::cipher_state::rekey_encrypt() {
+    std::size_t ret;
+    if ((ret = noise_cipherstate_rekey(encrypt_state)) != NOISE_ERROR_NONE)
+        handle_error(ret, "Failed to rekey for encrypt state.");
+}
+template<noise_context_config _config>
+void noise_context<_config>::cipher_state::rekey_decrypt() {
+    std::size_t ret;
+    if ((ret = noise_cipherstate_rekey(decrypt_state)) != NOISE_ERROR_NONE)
+        handle_error(ret, "Failed to rekey for decrypt state.");
 }
 template<noise_context_config _config>
 void noise_context<_config>::cipher_state::set_encrypt_nonce(std::uint64_t nonce) {

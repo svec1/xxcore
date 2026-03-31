@@ -1,7 +1,6 @@
 #ifndef ESSU_HPP
 #define ESSU_HPP
 
-#include "crypto.hpp"
 #include "network.hpp"
 #include "noise.hpp"
 #include "utils.hpp"
@@ -145,71 +144,80 @@ using packet_type =
     network::packet_native_type<extention_payload_data_type<_config_type>>;
 
 template<Unit_config_type _config_type>
-struct protocol_type
-    : public network::protocol_native_type<
-          packet_type<_config_type>, noheap::log_impl::create_owner("ESSU_PROTOCOL")> {
-    using packet_type        = protocol_type::packet_type;
+struct session_info_type;
+template<typename T>
+concept Session_info_type = std::same_as<
+    T, session_info_type<
+           typename T::packet_type::extention_data_type::unit_type::config_type>>;
+
+template<Session_info_type _session_info_type>
+struct protocol_type;
+
+template<Unit_config_type _config_type>
+struct session_info_type {
+    using packet_type        = packet_type<_config_type>;
     using unit_type          = packet_type::extention_data_type::unit_type;
     using noise_context_type = unit_type::noise_context_type;
+
+    friend class protocol_type<session_info_type>;
+
+private:
+    enum class status_type : std::size_t {
+        UNCONNECTED = 0,
+        HS1,
+        HS2,
+        HS3,
+        CONNECTED,
+    };
+
+public:
+    session_info_type(network::buffer_address_type _addr) : addr(_addr) {}
+
+public:
+    const network::buffer_address_type addr;
+
+    typename noise_context_type::cipher_state payload_cipher_state;
+    typename noise_context_type::cipher_state header_cipher_state;
+
+private:
+    status_type status               = status_type::UNCONNECTED;
+    std::size_t sender_unit_number   = 0;
+    std::size_t receiver_unit_number = 0;
+};
+
+template<Session_info_type _session_info_type>
+struct protocol_type
+    : public network::protocol_native_type<typename _session_info_type::packet_type,
+                                           noheap::log_impl::create_owner(
+                                               "ESSU_PROTOCOL")> {
+    using session_info_type  = _session_info_type;
+    using packet_type        = _session_info_type::packet_type;
+    using unit_type          = _session_info_type::unit_type;
+    using noise_context_type = _session_info_type::noise_context_type;
 
     static constexpr std::size_t timeout_ms = 2500;
 
 public:
-    struct node_info_type {
-        friend class protocol_type<_config_type>;
-
-    private:
-        enum class status_type : std::size_t {
-            UNCONNECTED = 0,
-            HS1,
-            HS2,
-            HS3,
-            CONNECTED,
-        };
-
-    public:
-        node_info_type() = default;
-        node_info_type(const node_info_type &node_info) { this->operator=(node_info); }
-        node_info_type &operator=(const node_info_type &node_info) {
-            status                 = node_info.status;
-            sender_unit_number     = node_info.sender_unit_number;
-            receiver_unit_number   = node_info.receiver_unit_number;
-            payload_cipher_state_p = node_info.payload_cipher_state_p;
-            header_obfs_key_p      = node_info.header_obfs_key_p;
-
-            return *this;
-        }
-
-    private:
-        status_type status;
-        std::size_t sender_unit_number;
-        std::size_t receiver_unit_number;
-
-        typename noise_context_type::cipher_state *payload_cipher_state_p;
-        const noise_context_type::dh_key_type     *header_obfs_key_p;
-    };
-    using node_info_s_type =
-        noheap::monotonic_array<std::pair<network::buffer_address_type, node_info_type>,
-                                network::max_count_addresses>;
+    using session_info_s_type =
+        noheap::monotonic_array<session_info_type *, network::max_count_addresses>;
 
 public:
     constexpr void prepare(packet_type &pckt, network::buffer_address_type addr,
                            protocol_type::callback_prepare_type callback) const override {
         try {
-            auto node_info_it = find_node_info(addr);
-            if (node_info_it == node_info_s.end())
-                throw noheap::runtime_error("Not found node info.");
-            auto &node_info =
-                const_cast<decltype(node_info_it->second) &>(node_info_it->second);
+            auto session_info_it = find_session_info(addr);
+            if (session_info_it == session_info_s.end())
+                throw noheap::runtime_error("Not found session info.");
+            decltype(auto) session_info = *(*session_info_it);
 
             callback(pckt);
 
-            update_protocol_status(node_info, pckt->units[0]);
+            update_protocol_status(session_info, pckt->units[0]);
 
             for (std::size_t i = 0; i < pckt->units.size(); ++i) {
                 unit_type &unit = pckt->units[i];
 
-                unit.header.unit_number = node_info.sender_unit_number++;
+                unit.header.unit_number = session_info.sender_unit_number++;
 
                 // Adds random padding
                 {
@@ -233,37 +241,36 @@ public:
                         payload_data_size = 0;
 
                     // Adds random padding after payload data
-                    typename unit_type::noise_context_type::cipher_state cipher_state_tmp;
-                    cipher_state_tmp.input_buffer.set(
+                    session_info.payload_cipher_state.input_buffer.set(
                         {reinterpret_cast<noheap::rbyte *>(unit.buffer.data()),
                          unit.buffer.size()},
                         std::clamp<std::size_t>(payload_data_size, 0,
                                                 unit.buffer.size()));
-                    cipher_state_tmp.pad();
+                    session_info.payload_cipher_state.pad();
                 }
 
                 // Encrypts buffer data and authenticates based on the header
                 if (unit.header.type == unit_type::payload_type::data) {
-                    if (!node_info.payload_cipher_state_p)
-                        throw noheap::runtime_error("Cipher state for payloads is null.");
-                    node_info.payload_cipher_state_p->input_buffer.set(
+                    session_info.payload_cipher_state.input_buffer.set(
                         {unit.buffer.data(), unit.buffer.size()},
                         unit.get_buffer_size_without_mac());
-                    node_info.payload_cipher_state_p->set_encrypt_nonce(
+                    session_info.payload_cipher_state.set_encrypt_nonce(
                         unit.header.unit_number);
-                    node_info.payload_cipher_state_p->encrypt(
+                    session_info.payload_cipher_state.encrypt(
                         {reinterpret_cast<noheap::rbyte *>(&unit.header),
                          sizeof(unit.header)});
+                    session_info.payload_cipher_state.rekey_encrypt();
                 }
 
                 // Generates header obfuscation key based on the unit_number
-                noise::buffer_type<sizeof(unit.header)> obfs_key_tmp{};
-                crypto::chacha_encrypt(
-                    {reinterpret_cast<noheap::ubyte *>(obfs_key_tmp.data()),
-                     obfs_key_tmp.size()},
-                    noheap::to_buffer<const crypto::buffer_key_type &>(
-                        *node_info.header_obfs_key_p),
-                    {}, unit.header.unit_number);
+                noise::buffer_type<sizeof(unit.header) + noise_context_type::mac_size>
+                    obfs_key_tmp{};
+                session_info.header_cipher_state.input_buffer.set(
+                    {obfs_key_tmp.data(), obfs_key_tmp.size()},
+                    obfs_key_tmp.size() - noise_context_type::mac_size);
+                session_info.header_cipher_state.set_encrypt_nonce(
+                    unit.header.unit_number);
+                session_info.header_cipher_state.encrypt({});
 
                 // Adds header data obfuscation
                 std::transform(
@@ -286,30 +293,30 @@ public:
     constexpr void handle(packet_type &pckt, network::buffer_address_type addr,
                           protocol_type::callback_handle_type callback) const override {
         try {
-            auto node_info_it = find_node_info(addr);
-            if (node_info_it == node_info_s.end())
+            auto session_info_it = find_session_info(addr);
+            if (session_info_it == session_info_s.end())
                 return;
 
-            auto &node_info =
-                const_cast<decltype(node_info_it->second) &>(node_info_it->second);
+            decltype(auto) session_info = *(*session_info_it);
 
             // Selects possible unit number
             std::size_t count_decrypted_units = 0;
-            for (std::size_t possible_unit_number = node_info.receiver_unit_number;
+            for (std::size_t possible_unit_number = session_info.receiver_unit_number;
                  possible_unit_number
-                 < node_info.receiver_unit_number + number_units_window;
+                 < session_info.receiver_unit_number + number_units_window;
                  ++possible_unit_number) {
                 for (auto &unit : pckt->units) {
                     unit_type test_unit = unit;
 
                     // Generates header obfuscation key based on the unit_number
-                    noise::buffer_type<sizeof(test_unit.header)> obfs_key_tmp{};
-                    crypto::chacha_encrypt(
-                        {reinterpret_cast<noheap::ubyte *>(obfs_key_tmp.data()),
-                         obfs_key_tmp.size()},
-                        noheap::to_buffer<const crypto::buffer_key_type &>(
-                            *node_info.header_obfs_key_p),
-                        {}, possible_unit_number);
+                    noise::buffer_type<sizeof(unit.header) + noise_context_type::mac_size>
+                        obfs_key_tmp{};
+                    session_info.header_cipher_state.input_buffer.set(
+                        {obfs_key_tmp.data(), obfs_key_tmp.size()},
+                        obfs_key_tmp.size() - noise_context_type::mac_size);
+                    session_info.header_cipher_state.set_encrypt_nonce(
+                        unit.header.unit_number);
+                    session_info.header_cipher_state.encrypt({});
 
                     // Deletes header data obfuscation
                     std::transform(reinterpret_cast<noheap::rbyte *>(&test_unit.header),
@@ -323,23 +330,20 @@ public:
                         continue;
 
                     if (test_unit.header.type == unit_type::payload_type::data) {
-                        if (!node_info.payload_cipher_state_p)
-                            throw noheap::runtime_error(
-                                "Cipher state for payloads is null.");
-
                         // Tries to decrypt buffer data
-                        node_info.payload_cipher_state_p->output_buffer.set(
+                        session_info.payload_cipher_state.output_buffer.set(
                             {test_unit.buffer.data(), test_unit.buffer.size()},
                             test_unit.buffer.size());
-                        node_info.payload_cipher_state_p->set_decrypt_nonce(
+                        session_info.payload_cipher_state.set_decrypt_nonce(
                             test_unit.header.unit_number);
                         try {
-                            node_info.payload_cipher_state_p->decrypt(
+                            session_info.payload_cipher_state.decrypt(
                                 {reinterpret_cast<noheap::rbyte *>(&test_unit.header),
                                  sizeof(test_unit.header)});
                         } catch (noheap::runtime_error &) {
                             continue;
                         }
+                        session_info.payload_cipher_state.rekey_decrypt();
                     }
 
                     unit = test_unit;
@@ -352,10 +356,8 @@ public:
             }
 
             // If it was not possible to decrypt all units in batch
-            if (count_decrypted_units != pckt->units.size()) {
-                node_info.receiver_unit_number += number_units_window;
-                return;
-            }
+            if (count_decrypted_units != pckt->units.size())
+                throw noheap::runtime_error("Failed to decrypt packet.");
 
             // Restores order of units in batch
             std::sort(pckt->units.begin(), pckt->units.end(),
@@ -363,10 +365,10 @@ public:
                           return el_left.header.unit_number < el_right.header.unit_number;
                       });
 
-            node_info.receiver_unit_number =
+            session_info.receiver_unit_number =
                 pckt->units[pckt->units.size() - 1].header.unit_number + 1;
 
-            update_protocol_status(node_info, pckt->units[0]);
+            update_protocol_status(session_info, pckt->units[0]);
 
             callback(std::move(pckt));
         } catch (noheap::runtime_error &excp) {
@@ -376,84 +378,59 @@ public:
     };
 
 public:
-    node_info_s_type::const_iterator
-        create_node_info(network::buffer_address_type               addr,
-                         typename noise_context_type::cipher_state &payload_cipher_state,
-                         const noise_context_type::dh_key_type &header_obfs_key) const {
-        auto it = find_node_info(addr);
-        if (it == node_info_s.end()) {
-            if (node_info_s.size() == network::max_count_addresses)
-                throw noheap::runtime_error(
-                    this->buffer_owner, "The node connection limit has been reached.");
+    void register_session_info(session_info_type &session_info) const {
+        if (find_session_info(session_info.addr) != session_info_s.end())
+            throw noheap::runtime_error(this->buffer_owner, "Session already exist.");
+        if (session_info_s.size() == network::max_count_addresses)
+            throw noheap::runtime_error(this->buffer_owner,
+                                        "Sessions limit has been reached.");
 
-            const_cast<node_info_s_type &>(node_info_s)
-                .push_back(typename node_info_s_type::value_type{std::move(addr),
-                                                                 node_info_type{}});
-        }
-
-        it->second.payload_cipher_state_p = &payload_cipher_state;
-        it->second.header_obfs_key_p      = &header_obfs_key;
-
-        return it;
+        const_cast<session_info_s_type &>(session_info_s).push_back(&session_info);
     }
-    node_info_s_type::const_iterator
-        get_node_info(network::buffer_address_type addr) const {
-        auto it = find_node_info(addr);
-        if (it == node_info_s.end())
-            throw noheap::runtime_error(this->buffer_owner, "Not found node info.");
-
-        return it;
+    void set_starting_handshake(session_info_type &session_info) const {
+        session_info.status = session_info_type::status_type::HS1;
     }
-    void set_starting_handshake(node_info_s_type::const_iterator it) const {
-        if (it == node_info_s.end())
-            throw noheap::runtime_error(this->buffer_owner, "Iterator is null.");
-
-        const_cast<node_info_type &>(it->second).status =
-            node_info_type::status_type::HS1;
-    }
-    void set_initial_unit_number(node_info_s_type::const_iterator it,
-                                 std::uint32_t                    _sender_unit_number,
-                                 std::uint32_t _receiver_unit_number) const {
-        if (it == node_info_s.end())
-            throw noheap::runtime_error(this->buffer_owner, "Iterator is null.");
-
-        auto &node_info = const_cast<node_info_type &>(it->second);
-
-        node_info.sender_unit_number   = _sender_unit_number;
-        node_info.receiver_unit_number = _receiver_unit_number;
+    void set_initial_unit_number(session_info_type &session_info,
+                                 std::uint32_t      initial_sender_unit_number,
+                                 std::uint32_t      initial_receiver_unit_number) const {
+        session_info.sender_unit_number   = initial_sender_unit_number;
+        session_info.receiver_unit_number = initial_receiver_unit_number;
     }
 
 private:
-    node_info_s_type::iterator find_node_info(network::buffer_address_type addr) const {
-        return std::find_if(node_info_s.begin(), node_info_s.end(), [&](const auto &el) {
-            return noheap::is_equal_bytes(
-                {reinterpret_cast<const noheap::ubyte *>(el.first.data()),
-                 el.first.size()},
-                {reinterpret_cast<const noheap::ubyte *>(addr.data()), addr.size()});
-        });
+    session_info_s_type::iterator
+        find_session_info(network::buffer_address_type addr) const {
+        return std::find_if(
+            session_info_s.begin(), session_info_s.end(), [&](const auto &el) {
+                return noheap::is_equal_bytes(
+                    {reinterpret_cast<const noheap::ubyte *>(el->addr.data()),
+                     el->addr.size()},
+                    {reinterpret_cast<const noheap::ubyte *>(addr.data()), addr.size()});
+            });
     }
-    void update_protocol_status(node_info_type &node_info, const unit_type &unit) const {
-        if (node_info.status == node_info_type::status_type::UNCONNECTED)
+    void update_protocol_status(session_info_type &session_info,
+                                const unit_type   &unit) const {
+        if (session_info.status == session_info_type::status_type::UNCONNECTED)
             return;
-        else if (node_info.status == node_info_type::status_type::HS1
+        else if (session_info.status == session_info_type::status_type::HS1
                  && unit.header.type != unit_type::payload_type::session_request)
             throw noheap::runtime_error("Expected session request unit.");
-        else if (node_info.status == node_info_type::status_type::HS2
+        else if (session_info.status == session_info_type::status_type::HS2
                  && unit.header.type != unit_type::payload_type::session_created)
             throw noheap::runtime_error("Expected session created unit.");
-        else if (node_info.status == node_info_type::status_type::HS3
+        else if (session_info.status == session_info_type::status_type::HS3
                  && unit.header.type != unit_type::payload_type::session_confirmed)
             throw noheap::runtime_error("Expected session confirmed unit.");
-        else if (node_info.status == node_info_type::status_type::CONNECTED
+        else if (session_info.status == session_info_type::status_type::CONNECTED
                  && unit.header.type != unit_type::payload_type::data)
             throw noheap::runtime_error("Expected unit to contain payload data.");
         else
-            node_info.status = typename node_info_type::status_type(
-                static_cast<std::size_t>(node_info.status) + 1);
+            session_info.status = typename session_info_type::status_type(
+                static_cast<std::size_t>(session_info.status) + 1);
     }
 
 private:
-    mutable node_info_s_type node_info_s;
+    mutable session_info_s_type session_info_s;
 };
 
 // Noise handshake action for establishing shared secret key
