@@ -14,9 +14,8 @@ class essu_session {
     using session_info_type = essu::session_info_type<config_type>;
 
 public:
-    using wrapper_packet_type =
-        network::wrapper_packet<essu::packet_type<config_type>,
-                                essu::protocol_type<session_info_type>>;
+    using wrapper_packet_type = network::wrapper_packet<essu::packet_type<config_type>,
+                                                        essu::protocol_type<config_type>>;
 
 public:
     using noise_handshake_action = essu::noise_handshake_action<config_type>;

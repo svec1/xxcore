@@ -144,13 +144,6 @@ using packet_type =
     network::packet_native_type<extention_payload_data_type<_config_type>>;
 
 template<Unit_config_type _config_type>
-struct session_info_type;
-template<typename T>
-concept Session_info_type = std::same_as<
-    T, session_info_type<
-           typename T::packet_type::extention_data_type::unit_type::config_type>>;
-
-template<Session_info_type _session_info_type>
 struct protocol_type;
 
 template<Unit_config_type _config_type>
@@ -159,7 +152,7 @@ struct session_info_type {
     using unit_type          = packet_type::extention_data_type::unit_type;
     using noise_context_type = unit_type::noise_context_type;
 
-    friend class protocol_type<session_info_type>;
+    friend class protocol_type<_config_type>;
 
 private:
     enum class status_type : std::size_t {
@@ -185,15 +178,14 @@ private:
     std::size_t receiver_unit_number = 0;
 };
 
-template<Session_info_type _session_info_type>
+template<Unit_config_type _config_type>
 struct protocol_type
-    : public network::protocol_native_type<typename _session_info_type::packet_type,
-                                           noheap::log_impl::create_owner(
-                                               "ESSU_PROTOCOL")> {
-    using session_info_type  = _session_info_type;
-    using packet_type        = _session_info_type::packet_type;
-    using unit_type          = _session_info_type::unit_type;
-    using noise_context_type = _session_info_type::noise_context_type;
+    : public network::protocol_native_type<
+          packet_type<_config_type>, noheap::log_impl::create_owner("ESSU_PROTOCOL")> {
+    using session_info_type  = session_info_type<_config_type>;
+    using packet_type        = session_info_type::packet_type;
+    using unit_type          = session_info_type::unit_type;
+    using noise_context_type = session_info_type::noise_context_type;
 
     static constexpr std::size_t timeout_ms = 2500;
 
