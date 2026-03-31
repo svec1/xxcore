@@ -169,8 +169,8 @@ public:
 public:
     const network::buffer_address_type addr;
 
-    typename noise_context_type::cipher_state payload_cipher_state;
-    typename noise_context_type::cipher_state header_cipher_state;
+    typename noise_context_type::cipher_state payload_cipher_state{};
+    typename noise_context_type::dh_key_type  header_obfs_key{};
 
 private:
     status_type status               = status_type::UNCONNECTED;
@@ -202,8 +202,10 @@ public:
                 throw noheap::runtime_error("Not found session info.");
             decltype(auto) session_info = *(*session_info_it);
 
-            callback(pckt);
+            typename noise_context_type::cipher_state header_cipher_state;
+            header_cipher_state.set_key(session_info.header_obfs_key);
 
+            callback(pckt);
             update_protocol_status(session_info, pckt->units[0]);
 
             for (std::size_t i = 0; i < pckt->units.size(); ++i) {
@@ -257,12 +259,11 @@ public:
                 // Generates header obfuscation key based on the unit_number
                 noise::buffer_type<sizeof(unit.header) + noise_context_type::mac_size>
                     obfs_key_tmp{};
-                session_info.header_cipher_state.input_buffer.set(
+                header_cipher_state.input_buffer.set(
                     {obfs_key_tmp.data(), obfs_key_tmp.size()},
                     obfs_key_tmp.size() - noise_context_type::mac_size);
-                session_info.header_cipher_state.set_encrypt_nonce(
-                    unit.header.unit_number);
-                session_info.header_cipher_state.encrypt({});
+                header_cipher_state.set_encrypt_nonce(unit.header.unit_number);
+                header_cipher_state.encrypt({});
 
                 // Adds header data obfuscation
                 std::transform(
@@ -291,6 +292,9 @@ public:
 
             decltype(auto) session_info = *(*session_info_it);
 
+            typename noise_context_type::cipher_state header_cipher_state;
+            header_cipher_state.set_key(session_info.header_obfs_key);
+
             // Selects possible unit number
             std::size_t count_decrypted_units = 0;
             for (std::size_t possible_unit_number = session_info.receiver_unit_number;
@@ -303,12 +307,11 @@ public:
                     // Generates header obfuscation key based on the unit_number
                     noise::buffer_type<sizeof(unit.header) + noise_context_type::mac_size>
                         obfs_key_tmp{};
-                    session_info.header_cipher_state.input_buffer.set(
+                    header_cipher_state.input_buffer.set(
                         {obfs_key_tmp.data(), obfs_key_tmp.size()},
                         obfs_key_tmp.size() - noise_context_type::mac_size);
-                    session_info.header_cipher_state.set_encrypt_nonce(
-                        unit.header.unit_number);
-                    session_info.header_cipher_state.encrypt({});
+                    header_cipher_state.set_encrypt_nonce(possible_unit_number);
+                    header_cipher_state.encrypt({});
 
                     // Deletes header data obfuscation
                     std::transform(reinterpret_cast<noheap::rbyte *>(&test_unit.header),

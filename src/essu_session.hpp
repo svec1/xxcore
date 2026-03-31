@@ -160,7 +160,7 @@ void essu_session::establish_connection(
                                          local_keypair.pub, remote_public_key,
                                          ephemeral_obfs_key1, ephemeral_obfs_key2);
 
-        info.header_cipher_state.set_key(ephemeral_obfs_key1);
+        info.header_obfs_key = ephemeral_obfs_key1;
 
         // Init noise context
         auto &noise_context = noise_udp_stream.get_action();
@@ -189,8 +189,8 @@ void essu_session::establish_connection(
                                            noise_context.get_handshake_payload(), value1,
                                            value2);
 
-        info.header_cipher_state.set_key(value1);
-        session_id = noheap::represent_bytes<std::size_t>(
+        info.header_obfs_key = value1;
+        session_id           = noheap::represent_bytes<std::size_t>(
             noheap::clip_buffer<sizeof(std::size_t), 0>(value2));
 
         const std::uint32_t subvalue1 = noheap::represent_bytes<std::uint32_t>(
