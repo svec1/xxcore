@@ -12,7 +12,7 @@ static constexpr std::size_t header_data_size = 16;
 static constexpr std::size_t buffer_data_size = unit_size - header_data_size;
 
 static constexpr std::size_t batch_units_count        = 4;
-static constexpr std::size_t number_batches_per_rekey = 16;
+static constexpr std::size_t number_batches_per_rekey = 128;
 static constexpr std::size_t number_units_window      = 64; // 16 batch
 
 template<noise::noise_pattern _pattern, noise::ecdh_type _ecdh,
@@ -353,10 +353,17 @@ public:
                     break;
                 }
 
-                if (std::size_t diff =
-                        possible_unit_number - session_info.receiver_unit_number;
-                    diff && (diff + 1) % 4 == 0)
+                if ((possible_unit_number - session_info.receiver_unit_number + 1)
+                        % batch_units_count
+                    == 0) {
                     ++session_info.number_batches_received;
+
+                    // Performs rekey for decryption
+                    if (session_info.payload_cipher_state.valid()
+                        && session_info.number_batches_received % number_batches_per_rekey
+                               == 0)
+                        session_info.payload_cipher_state.rekey_decrypt();
+                }
 
                 if (count_decrypted_units == pckt->units.size())
                     break;
@@ -366,11 +373,6 @@ public:
             if (count_decrypted_units != pckt->units.size())
                 throw noheap::runtime_error("Failed to decrypt packet: {} units",
                                             count_decrypted_units);
-
-            // Performs rekey for decryption
-            if (session_info.payload_cipher_state.valid()
-                && session_info.number_batches_received % number_batches_per_rekey == 0)
-                session_info.payload_cipher_state.rekey_decrypt();
 
             // Restores order of units in batch
             std::sort(pckt->units.begin(), pckt->units.end(),
