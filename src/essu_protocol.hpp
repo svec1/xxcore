@@ -253,7 +253,6 @@ public:
                     session_info.payload_cipher_state.encrypt(
                         {reinterpret_cast<noheap::rbyte *>(&unit.header),
                          sizeof(unit.header)});
-                    session_info.payload_cipher_state.rekey_encrypt();
                 }
 
                 // Generates header obfuscation key based on the unit_number
@@ -272,6 +271,8 @@ public:
                     obfs_key_tmp.data(), reinterpret_cast<noheap::rbyte *>(&unit.header),
                     std::bit_xor{});
             }
+            if (session_info.payload_cipher_state.valid())
+                session_info.payload_cipher_state.rekey_encrypt();
 
             // Shuffle units in batch
             std::random_device rd;
@@ -336,16 +337,20 @@ public:
                             session_info.payload_cipher_state.decrypt(
                                 {reinterpret_cast<noheap::rbyte *>(&test_unit.header),
                                  sizeof(test_unit.header)});
-                        } catch (noheap::runtime_error &) {
+                        } catch (noheap::runtime_error &excp) {
                             continue;
                         }
-                        session_info.payload_cipher_state.rekey_decrypt();
                     }
 
                     unit = test_unit;
                     ++count_decrypted_units;
                     break;
                 }
+                if (std::size_t diff =
+                        possible_unit_number - session_info.receiver_unit_number;
+                    session_info.payload_cipher_state.valid() && diff != 0
+                    && diff % 4 == 0)
+                    session_info.payload_cipher_state.rekey_decrypt();
 
                 if (count_decrypted_units == pckt->units.size())
                     break;
@@ -362,6 +367,7 @@ public:
                           return el_left.header.unit_number < el_right.header.unit_number;
                       });
 
+            session_info.payload_cipher_state.rekey_decrypt();
             session_info.receiver_unit_number =
                 pckt->units[pckt->units.size() - 1].header.unit_number + 1;
 

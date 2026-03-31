@@ -248,6 +248,10 @@ public:
         void set_decrypt_nonce(std::uint64_t nonce);
         void set_key(const dh_key_type &key);
 
+        bool valid() const;
+        bool valid_encrypt() const;
+        bool valid_decrypt() const;
+
     private:
         void set_states(NoiseCipherState *_encrypt_state,
                         NoiseCipherState *_decrypt_state);
@@ -450,6 +454,18 @@ void noise_context<_config>::cipher_state::set_key(const dh_key_type &key) {
         handle_error(ret, "Failed to set key.");
 
     initialized_states = true;
+}
+template<noise_context_config _config>
+bool noise_context<_config>::cipher_state::valid() const {
+    return valid_encrypt() && valid_decrypt();
+}
+template<noise_context_config _config>
+bool noise_context<_config>::cipher_state::valid_encrypt() const {
+    return encrypt_state && noise_cipherstate_has_key(encrypt_state);
+}
+template<noise_context_config _config>
+bool noise_context<_config>::cipher_state::valid_decrypt() const {
+    return decrypt_state && noise_cipherstate_has_key(decrypt_state);
 }
 template<noise_context_config _config>
 void noise_context<_config>::cipher_state::set_states(NoiseCipherState *_encrypt_state,
