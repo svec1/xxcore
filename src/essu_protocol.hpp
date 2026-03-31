@@ -202,6 +202,9 @@ public:
                 throw noheap::runtime_error("Not found session info.");
             decltype(auto) session_info = *(*session_info_it);
 
+            typename noise_context_type::cipher_state header_cipher_state;
+            header_cipher_state.set_key(session_info.header_obfs_key);
+
             callback(pckt);
             update_protocol_status(session_info, pckt->units[0]);
 
@@ -255,9 +258,7 @@ public:
 
                 // Generates header obfuscation key based on the unit_number
                 noise::buffer_type<sizeof(unit.header) + noise_context_type::mac_size>
-                                                          obfs_key_tmp{};
-                typename noise_context_type::cipher_state header_cipher_state;
-                header_cipher_state.set_key(session_info.header_obfs_key);
+                    obfs_key_tmp{};
                 header_cipher_state.input_buffer.set(
                     {obfs_key_tmp.data(), obfs_key_tmp.size()},
                     obfs_key_tmp.size() - noise_context_type::mac_size);
@@ -291,25 +292,27 @@ public:
 
             decltype(auto) session_info = *(*session_info_it);
 
+            typename noise_context_type::cipher_state header_cipher_state;
+            header_cipher_state.set_key(session_info.header_obfs_key);
+
             // Selects possible unit number
             std::size_t count_decrypted_units = 0;
             for (std::size_t possible_unit_number = session_info.receiver_unit_number;
                  possible_unit_number
                  < session_info.receiver_unit_number + number_units_window;
                  ++possible_unit_number) {
+                // Generates header obfuscation key based on the possible_unit_number
+                noise::buffer_type<sizeof(pckt->units[0].header)
+                                   + noise_context_type::mac_size>
+                    obfs_key_tmp{};
+                header_cipher_state.input_buffer.set(
+                    {obfs_key_tmp.data(), obfs_key_tmp.size()},
+                    obfs_key_tmp.size() - noise_context_type::mac_size);
+                header_cipher_state.set_encrypt_nonce(possible_unit_number);
+                header_cipher_state.encrypt({});
+
                 for (auto &unit : pckt->units) {
                     unit_type test_unit = unit;
-
-                    // Generates header obfuscation key based on the unit_number
-                    noise::buffer_type<sizeof(unit.header) + noise_context_type::mac_size>
-                                                              obfs_key_tmp{};
-                    typename noise_context_type::cipher_state header_cipher_state;
-                    header_cipher_state.set_key(session_info.header_obfs_key);
-                    header_cipher_state.input_buffer.set(
-                        {obfs_key_tmp.data(), obfs_key_tmp.size()},
-                        obfs_key_tmp.size() - noise_context_type::mac_size);
-                    header_cipher_state.set_encrypt_nonce(possible_unit_number);
-                    header_cipher_state.encrypt({});
 
                     // Deletes header data obfuscation
                     std::transform(reinterpret_cast<noheap::rbyte *>(&test_unit.header),
@@ -350,7 +353,8 @@ public:
 
             // If it was not possible to decrypt all units in batch
             if (count_decrypted_units != pckt->units.size())
-                throw noheap::runtime_error("Failed to decrypt packet.");
+                throw noheap::runtime_error("Failed to decrypt packet.{}",
+                                            count_decrypted_units);
 
             // Restores order of units in batch
             std::sort(pckt->units.begin(), pckt->units.end(),
