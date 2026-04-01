@@ -12,7 +12,7 @@ static constexpr std::size_t header_data_size = 16;
 static constexpr std::size_t buffer_data_size = unit_size - header_data_size;
 
 static constexpr std::size_t batch_units_count              = 4;
-static constexpr std::size_t batches_per_rekey_number       = 128;
+static constexpr std::size_t batches_per_rekey_number       = 32;
 static constexpr std::size_t batches_window_number          = 16;
 static constexpr std::size_t max_undecrypted_batches_number = 16;
 
@@ -373,12 +373,12 @@ public:
             // If it was not possible to decrypt all units in batch
             if (count_decrypted_units != pckt->units.size()) {
                 ++session_info.count_undecrypted_batch;
+                if (session_info.count_undecrypted_batch
+                    == max_undecrypted_batches_number)
+                    throw noheap::runtime_error("Failed to decrypt last batches.");
                 return;
             } else
                 session_info.count_undecrypted_batch = 0;
-
-            if (session_info.count_undecrypted_batch == max_undecrypted_batches_number)
-                throw noheap::runtime_error("Failed to decrypt last batches.");
 
             // Restores order of units in batch
             std::sort(pckt->units.begin(), pckt->units.end(),

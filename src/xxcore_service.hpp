@@ -49,7 +49,6 @@ private:
                 pckt->units[i].header.type = decltype(pckt->units[0].header.type)::data;
                 pckt->units[i].header.flag = decltype(pckt->units[0].header.flag)::drop;
             }
-            audio.push(std::move(buffer_tmp), false);
         }
         constexpr void process_packet(test_action::packet_type &&pckt) override {
             audio_flow_type::buffer_type buffer_tmp;
