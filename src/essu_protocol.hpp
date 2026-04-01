@@ -11,9 +11,10 @@ static constexpr std::size_t unit_size        = 340;
 static constexpr std::size_t header_data_size = 16;
 static constexpr std::size_t buffer_data_size = unit_size - header_data_size;
 
-static constexpr std::size_t batch_units_count        = 4;
-static constexpr std::size_t number_batches_per_rekey = 128;
-static constexpr std::size_t number_units_window      = 64; // 16 batch
+static constexpr std::size_t batch_units_count              = 4;
+static constexpr std::size_t batches_per_rekey_number       = 128;
+static constexpr std::size_t batches_window_number          = 16;
+static constexpr std::size_t max_undecrypted_batches_number = 16;
 
 template<noise::noise_pattern _pattern, noise::ecdh_type _ecdh,
          std::size_t _payload_data_size>
@@ -106,12 +107,13 @@ public:
 
 public:
     struct header_data_type {
-        std::size_t unit_number;
-
-        noheap::buffer_bytes_type<6> reserved;
-
-        flag_type    flag;
-        payload_type type;
+        std::size_t   unit_number;
+        std::uint32_t key_iteration;
+        payload_type  type;
+        flag_type     flag;
+        // Reserved
+        std::uint8_t byte1;
+        std::uint8_t byte2;
     };
 
 public:
@@ -175,10 +177,12 @@ public:
 
 private:
     status_type status                  = status_type::UNCONNECTED;
+    std::size_t batches_sent_number     = 0;
     std::size_t sender_unit_number      = 0;
     std::size_t receiver_unit_number    = 0;
-    std::size_t number_batches_sent     = 0;
-    std::size_t number_batches_received = 0;
+    std::size_t sender_key_iteration    = 0;
+    std::size_t receiver_key_iteration  = 0;
+    std::size_t count_undecrypted_batch = 0;
 };
 
 template<Unit_config_type _config_type>
@@ -211,10 +215,19 @@ public:
             callback(pckt);
             update_protocol_status(session_info, pckt->units[0]);
 
+            // Performs rekey for encryption
+            ++session_info.batches_sent_number;
+            if (session_info.payload_cipher_state.valid()
+                && session_info.batches_sent_number % batches_per_rekey_number == 0) {
+                session_info.payload_cipher_state.rekey_encrypt();
+                ++session_info.sender_key_iteration;
+            }
+
             for (std::size_t i = 0; i < pckt->units.size(); ++i) {
                 unit_type &unit = pckt->units[i];
 
-                unit.header.unit_number = session_info.sender_unit_number++;
+                unit.header.unit_number   = session_info.sender_unit_number++;
+                unit.header.key_iteration = session_info.sender_key_iteration;
 
                 // Adds random padding
                 {
@@ -274,11 +287,6 @@ public:
                     obfs_key_tmp.data(), reinterpret_cast<noheap::rbyte *>(&unit.header),
                     std::bit_xor{});
             }
-            // Performs rekey for encryption
-            ++session_info.number_batches_sent;
-            if (session_info.payload_cipher_state.valid()
-                && session_info.number_batches_sent % number_batches_per_rekey == 0)
-                session_info.payload_cipher_state.rekey_encrypt();
 
             // Shuffles units in batch
             std::random_device rd;
@@ -306,7 +314,7 @@ public:
             std::size_t count_decrypted_units = 0;
             for (std::size_t possible_unit_number = session_info.receiver_unit_number;
                  possible_unit_number
-                 < session_info.receiver_unit_number + number_units_window;
+                 < session_info.receiver_unit_number + batches_window_number;
                  ++possible_unit_number) {
                 // Generates header obfuscation key based on the possible_unit_number
                 noise::buffer_type<sizeof(pckt->units[0].header)
@@ -332,6 +340,11 @@ public:
                     if (test_unit.header.unit_number != possible_unit_number)
                         continue;
 
+                    for (; session_info.receiver_key_iteration
+                           < test_unit.header.key_iteration;
+                         ++session_info.receiver_key_iteration)
+                        session_info.payload_cipher_state.rekey_decrypt();
+
                     if (test_unit.header.type == unit_type::payload_type::data) {
                         // Tries to decrypt buffer data
                         session_info.payload_cipher_state.output_buffer.set(
@@ -353,26 +366,19 @@ public:
                     break;
                 }
 
-                if ((possible_unit_number - session_info.receiver_unit_number + 1)
-                        % batch_units_count
-                    == 0) {
-                    ++session_info.number_batches_received;
-
-                    // Performs rekey for decryption
-                    if (session_info.payload_cipher_state.valid()
-                        && session_info.number_batches_received % number_batches_per_rekey
-                               == 0)
-                        session_info.payload_cipher_state.rekey_decrypt();
-                }
-
                 if (count_decrypted_units == pckt->units.size())
                     break;
             }
 
             // If it was not possible to decrypt all units in batch
-            if (count_decrypted_units != pckt->units.size())
-                throw noheap::runtime_error("Failed to decrypt packet: {} units",
-                                            count_decrypted_units);
+            if (count_decrypted_units != pckt->units.size()) {
+                ++session_info.count_undecrypted_batch;
+                return;
+            } else
+                session_info.count_undecrypted_batch = 0;
+
+            if (session_info.count_undecrypted_batch == max_undecrypted_batches_number)
+                throw noheap::runtime_error("Failed to decrypt last batches.");
 
             // Restores order of units in batch
             std::sort(pckt->units.begin(), pckt->units.end(),
