@@ -1,6 +1,6 @@
 [submodule "opus"]
     path = thirdparty/opus
     url = https://github.com/xiph/opus.git
-[submodule "cnoise"]
+[submodule "thirdparty/cnoise"]
 	path = thirdparty/cnoise
 	url = https://github.com/svec1/cnoise.git
