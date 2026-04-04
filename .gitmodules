@@ -1,8 +1,6 @@
 [submodule "opus"]
     path = thirdparty/opus
     url = https://github.com/xiph/opus.git
-
-[submodule "noise-c"]
-    path = thirdparty/noise-c
-    url = https://github.com/svec1/noise-c.git
-    branch = openbsd_support
+[submodule "cnoise"]
+	path = thirdparty/cnoise
+	url = https://github.com/svec1/cnoise.git

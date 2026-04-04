@@ -15,9 +15,9 @@ public:
     static constexpr std::size_t max_size_config = BOOST_JSON_STACK_BUFFER_SIZE;
     using buffer_config_type = noheap::buffer_type<char, max_size_config>;
 
-    using noise_context_type = essu_session::noise_context_type;
-    using address_type       = essu_session::net_stream_udp::address_type;
-    using port_type          = essu_session::net_stream_udp::port_type;
+    using noise_context_type = essu::session::noise_context_type;
+    using address_type       = essu::session::net_stream_udp::address_type;
+    using port_type          = essu::session::net_stream_udp::port_type;
 
 private:
     // Config for noise handshake.
@@ -31,14 +31,13 @@ private:
     };
 
     // For test
-    struct test_action final
-        : network::action<essu_session::wrapper_packet_type::packet_type> {
+    struct test_action final : network::action<essu::packet_type> {
         static constexpr std::size_t max_stream_size = 32;
 
         using audio_flow_type = audio_flow<max_stream_size>;
 
     public:
-        constexpr void init_packet(test_action::packet_type &pckt) override {
+        void init_packet(test_action::packet_type &pckt) {
             audio_flow_type::buffer_type buffer_tmp;
             audio.pop(buffer_tmp);
             pckt->units[0].header.type = decltype(pckt->units[0].header.type)::data;
@@ -50,12 +49,12 @@ private:
                 pckt->units[i].header.flag = decltype(pckt->units[0].header.flag)::drop;
             }
         }
-        constexpr void process_packet(test_action::packet_type &&pckt) override {
+        void process_packet(test_action::packet_type &&pckt) {
             audio_flow_type::buffer_type buffer_tmp;
             std::copy(pckt->units[0].buffer.begin(),
                       pckt->units[0].buffer.begin() + buffer_tmp.size(),
                       reinterpret_cast<noheap::rbyte *>(buffer_tmp.begin()));
-            // audio.push(std::move(buffer_tmp), false);
+            audio.push(std::move(buffer_tmp), false);
         }
 
     private:
@@ -85,7 +84,7 @@ xxcore_service::xxcore_service(address_type &&_addr, asio::ip::port_type _port)
 }
 
 void xxcore_service::run() {
-    essu_session stream(addr, port);
+    essu::session stream(addr, port);
 
     stream.establish_connection(
         config.role, {}, {config.local_private_key, config.local_public_key},

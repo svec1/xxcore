@@ -7,11 +7,12 @@ set(XXCORE xxcore)
 set(CMAKE_EXPORT_COMPILE_COMMANDS YES)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_COMPILER clang++)
-file(GLOB_RECURSE SRC_FILES src/*.cpp)
+
+file(GLOB_RECURSE SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 
 project(${XXCORE})
-add_executable(${XXCORE} ${SRC_FILES})
-        
+
+# Builds OPUS lib
 set(OPUS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/opus)
 set(OPUS_INCLUDE_DIR ${OPUS_DIR}/include)
 set(OPUS_BUILD_SHARED_LIBRARY ON)
@@ -20,24 +21,26 @@ set(OPUS_NONTHREADSAFE_PSEUDOSTACK OFF)
 set(OPUS_USE_ALLOCA OFF)
 add_subdirectory(${OPUS_DIR})	
 
-include(cmake/noise_c_target.cmake)
-add_dependencies(${XXCORE} ${NOISE_C})
+# Builds CNOISE lib
+set(CNOISE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/cnoise)
+set(CNOISE_TESTS OFF)
+add_subdirectory(${CNOISE_DIR})	
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -g")
-
+add_executable(${XXCORE} ${SRC_FILES})
+target_compile_options(${XXCORE} PRIVATE -pthread -O1 -fno-inline-functions)
 target_include_directories(
     ${XXCORE}
     PUBLIC 
     src/
-    ${LIBBOOST_INCLUDE_DIR}
+    ${BOOST_INCLUDE_DIR}
     ${OPUS_INCLUDE_DIR}
-	${NOISE_C_INCLUDE_DIR}
+    ${CNOISE_INCLUDE_DIR}
 )
 target_link_libraries(
     ${XXCORE}
     PRIVATE
     Opus::opus
-    ${NOISE_C_LIBS}
+    cnoise 
 )
 
 if(SNDIO AND (LINUX OR BSD))

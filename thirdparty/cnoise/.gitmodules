@@ -1,0 +1,9 @@
+[submodule "portable"]
+    path = thirdparty/portable
+    url = https://github.com/libressl/portable.git
+[submodule "BLAKE2"]
+    path = thirdparty/BLAKE2
+    url = https://github.com/BLAKE2/BLAKE2.git
+[submodule "mlkem-libjade"]
+	path = thirdparty/mlkem-libjade
+	url = https://github.com/pq-code-package/mlkem-libjade.git

@@ -9,8 +9,6 @@ namespace noise {
 
 enum class noise_pattern : std::uint16_t {
     UNKNOWN = 0,
-    XX      = NOISE_PATTERN_XX,
-    XX_HFS  = NOISE_PATTERN_XX_HFS, // with KEM
     XK      = NOISE_PATTERN_XK,
     XK_HFS  = NOISE_PATTERN_XK_HFS, // with KEM
 };
@@ -34,9 +32,7 @@ enum class noise_action : std::uint16_t {
 enum class ecdh_type : std::uint16_t {
     UNKNOWN                 = 0,
     x25519                  = NOISE_DH_CURVE25519,
-    x448                    = NOISE_DH_CURVE448,
     x25519_hybrid_kyber1024 = NOISE_DH_CURVE25519 ^ NOISE_DH_KYBER1024,
-    x448_hybrid_kyber1024   = NOISE_DH_CURVE448 ^ NOISE_DH_KYBER1024
 };
 
 enum class cipher_type : std::uint16_t {
@@ -50,11 +46,7 @@ enum class hash_type : std::uint16_t {
 };
 
 noise_pattern get_noise_pattern(std::string_view pattern_string) {
-    if (pattern_string == "XX")
-        return noise_pattern::XX;
-    else if (pattern_string == "XX_HFS")
-        return noise_pattern::XX_HFS;
-    else if (pattern_string == "XK")
+    if (pattern_string == "XK")
         return noise_pattern::XK;
     else if (pattern_string == "XK_HFS")
         return noise_pattern::XK_HFS;
@@ -70,12 +62,9 @@ noise_role get_noise_role(std::string_view role_string) {
 }
 template<noise_pattern pattern, ecdh_type ecdh>
 consteval std::size_t pattern_ecdh_is_compatible() {
-    if constexpr (((pattern == noise_pattern::XX || pattern == noise_pattern::XK)
-                   && (ecdh == ecdh_type::x25519 || ecdh == ecdh_type::x448))
-                  || ((pattern == noise_pattern::XX_HFS
-                       || pattern == noise_pattern::XK_HFS)
-                      && (ecdh == ecdh_type::x25519_hybrid_kyber1024
-                          || ecdh == ecdh_type::x448_hybrid_kyber1024)))
+    if constexpr ((pattern == noise_pattern::XK && ecdh == ecdh_type::x25519)
+                  || (pattern == noise_pattern::XK_HFS
+                      && ecdh == ecdh_type::x25519_hybrid_kyber1024))
         return true;
     return false;
 }
@@ -84,24 +73,19 @@ template<ecdh_type ecdh>
 consteval std::size_t get_dh_key_size() {
     if constexpr (ecdh == ecdh_type::x25519 || ecdh == ecdh_type::x25519_hybrid_kyber1024)
         return 32;
-    else if constexpr (ecdh == ecdh_type::x448
-                       || ecdh == ecdh_type::x448_hybrid_kyber1024)
-        return 56;
     else
         static_assert(false, "The passed ECDH type is not supported.");
 }
 template<ecdh_type ecdh>
 consteval std::size_t get_kem_key_size() {
-    if constexpr (ecdh == ecdh_type::x25519_hybrid_kyber1024
-                  || ecdh == ecdh_type::x448_hybrid_kyber1024)
+    if constexpr (ecdh == ecdh_type::x25519_hybrid_kyber1024)
         return 1568;
     else
         return 0;
 }
 template<ecdh_type ecdh>
 consteval std::size_t get_kem_cipher_text_size() {
-    if constexpr (ecdh == ecdh_type::x25519_hybrid_kyber1024
-                  || ecdh == ecdh_type::x448_hybrid_kyber1024)
+    if constexpr (ecdh == ecdh_type::x25519_hybrid_kyber1024)
         return 1568;
     else
         return 0;
@@ -145,8 +129,7 @@ public:
 
 private:
     static constexpr bool hybrid_kyber1024 =
-        (config.ecdh == ecdh_type::x25519_hybrid_kyber1024
-         || config.ecdh == ecdh_type::x448_hybrid_kyber1024);
+        (config.ecdh == ecdh_type::x25519_hybrid_kyber1024);
     static constexpr ecdh_type ecdh =
         hybrid_kyber1024
             ? ecdh_type(static_cast<std::uint16_t>(config.ecdh) ^ NOISE_DH_KYBER1024)

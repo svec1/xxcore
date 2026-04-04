@@ -1,25 +1,22 @@
 #ifndef ESSU_SESSION_HPP
 #define ESSU_SESSION_HPP
 
+#include "essu_noise_handshake_action.hpp"
 #include "essu_protocol.hpp"
 
 using namespace boost;
 
-class essu_session {
-    static constexpr network::ipv         v       = network::ipv::v4;
-    static constexpr noise::noise_pattern pattern = noise::noise_pattern::XK;
-    static constexpr noise::ecdh_type     ecdh    = noise::ecdh_type::x25519;
+namespace essu {
 
-    using config_type       = essu::unit_config_type<pattern, ecdh, 280>;
-    using session_info_type = essu::session_info_type<config_type>;
+class session {
+    static constexpr network::ipv v = network::ipv::v4;
 
 public:
-    using wrapper_packet_type = network::wrapper_packet<essu::packet_type<config_type>,
-                                                        essu::protocol_type<config_type>>;
+    using wrapper_packet_type =
+        network::wrapper_packet<essu::packet_type, essu::protocol_type>;
 
 public:
-    using noise_handshake_action = essu::noise_handshake_action<config_type>;
-    using noise_context_type     = noise_handshake_action::noise_context_type;
+    using noise_context_type = essu::noise_handshake_action::noise_context_type;
 
     using net_stream_udp = network::net_stream_udp<
         network::decoy_action<typename wrapper_packet_type::packet_type>, v>;
@@ -30,7 +27,7 @@ public:
     using buffer_unique_value_type = noise::buffer_type<32>;
 
 public:
-    essu_session(address_type _remote_addr, port_type port);
+    session(address_type _remote_addr, port_type port);
 
 public:
     // Establishes connection with node(remote_addr): performs noise handshake
@@ -52,7 +49,7 @@ private:
 private:
     template<network::Net_stream_udp TStream>
     static void node_send(TStream &udp_stream, wrapper_packet_type &pckt,
-                          const session_info_type &session_info);
+                          const essu::session_info_type &session_info);
     template<network::Net_stream_udp TStream>
     static void node_receive(TStream &udp_stream, wrapper_packet_type &pckt,
                              const session_info_type &session_info);
@@ -87,15 +84,16 @@ private:
 
     std::atomic<bool> running;
 };
+} // namespace essu
 
-essu_session::essu_session(address_type remote_addr, port_type port)
+essu::session::session(address_type remote_addr, port_type port)
     : info(udp_stream.get_address_bytes(remote_addr)),
       buffer_hex_remote_addr(
           noheap::clip_buffer<noheap::buffer_size<decltype(buffer_hex_remote_addr)>, 0>(
               noheap::hex_encode(info.addr))),
       udp_stream(port) {
 }
-void essu_session::establish_connection(
+void essu::session::establish_connection(
     noise::noise_role role, noise_context_type::prologue_extention_type ext,
     const noise_context_type::keypair_type        &local_keypair,
     const noise_context_type::dh_key_type         &remote_public_key,
@@ -160,7 +158,7 @@ void essu_session::establish_connection(
                                          local_keypair.pub, remote_public_key,
                                          ephemeral_obfs_key1, ephemeral_obfs_key2);
 
-        info.header_obfs_key = ephemeral_obfs_key1;
+        protocol.set_header_obfs_key(info, ephemeral_obfs_key1);
 
         // Init noise context
         auto &noise_context = noise_udp_stream.get_action();
@@ -179,18 +177,17 @@ void essu_session::establish_connection(
                 break;
         }
 
-        // Gets finally cipher state
-        info.payload_cipher_state = noise_context.dump();
-        udp_stream                = std::move(noise_udp_stream);
-
         // Generates values for header obfs key + initial packet number + session_id
         buffer_unique_value_type value1{}, value2{};
         generate_pair_session_unique_value(noise_context.get_handshake_hash(),
                                            noise_context.get_handshake_payload(), value1,
                                            value2);
 
-        info.header_obfs_key = value1;
-        session_id           = noheap::represent_bytes<std::size_t>(
+        // Gets finally payload cipher state and header obfs key
+        protocol.set_payload_cipher_state(info, noise_context.dump());
+        protocol.set_header_obfs_key(info, value1);
+
+        session_id = noheap::represent_bytes<std::size_t>(
             noheap::clip_buffer<sizeof(std::size_t), 0>(value2));
 
         const std::uint32_t subvalue1 = noheap::represent_bytes<std::uint32_t>(
@@ -200,9 +197,10 @@ void essu_session::establish_connection(
                                 sizeof(std::size_t) + sizeof(std::uint32_t)>(value2));
 
         if (role == noise::noise_role::INITIATOR)
-            protocol.set_initial_unit_number(info, subvalue1, subvalue2);
+            protocol.set_initial_units_number(info, subvalue1, subvalue2);
         else
-            protocol.set_initial_unit_number(info, subvalue2, subvalue1);
+            protocol.set_initial_units_number(info, subvalue2, subvalue1);
+        udp_stream = std::move(noise_udp_stream);
     } catch (noheap::runtime_error &excp) {
         this->throw_error("Failed to establish connection. {}", excp.what());
     }
@@ -210,7 +208,7 @@ void essu_session::establish_connection(
     this->message("{} session is established.", session_id);
 }
 template<network::Derived_from_action Action>
-void essu_session::run_stream_session() {
+void essu::session::run_stream_session() {
     network::net_stream_udp<Action, v> session_udp_stream(udp_stream.get_port());
     session_udp_stream = std::move(udp_stream);
 
@@ -250,7 +248,7 @@ void essu_session::run_stream_session() {
 }
 
 template<typename... Args>
-void essu_session::message(std::format_string<Args...> format, Args &&...args) {
+void essu::session::message(std::format_string<Args...> format, Args &&...args) {
     noheap::buffer_chars_type<noheap::print_impl::buffer_size
                               - noheap::buffer_size<decltype(buffer_owner)>
                               - noheap::buffer_size<decltype(buffer_hex_remote_addr)>>
@@ -260,7 +258,7 @@ void essu_session::message(std::format_string<Args...> format, Args &&...args) {
     log.to_all("{}: {}", hex_remote_addr, std::string_view(buffer_format));
 }
 template<typename... Args>
-void essu_session::throw_error(std::format_string<Args...> format, Args &&...args) {
+void essu::session::throw_error(std::format_string<Args...> format, Args &&...args) {
     noheap::buffer_chars_type<noheap::runtime_error::buffer_size
                               - noheap::buffer_size<decltype(buffer_owner)>
                               - noheap::buffer_size<decltype(buffer_hex_remote_addr)>>
@@ -272,14 +270,14 @@ void essu_session::throw_error(std::format_string<Args...> format, Args &&...arg
 }
 
 template<network::Net_stream_udp TStream>
-void essu_session::node_send(TStream &udp_stream, wrapper_packet_type &pckt,
-                             const session_info_type &session_info) {
+void essu::session::node_send(TStream &udp_stream, wrapper_packet_type &pckt,
+                              const session_info_type &session_info) {
     udp_stream.template send_to<decltype(pckt)>(
         pckt, TStream::get_address_object(session_info.addr));
 }
 template<network::Net_stream_udp TStream>
-void essu_session::node_receive(TStream &udp_stream, wrapper_packet_type &pckt,
-                                const session_info_type &session_info) {
+void essu::session::node_receive(TStream &udp_stream, wrapper_packet_type &pckt,
+                                 const session_info_type &session_info) {
     future_wrapper f([&]() {
         udp_stream.template async_receive_from<decltype(pckt)>(
             pckt, TStream::get_address_object(session_info.addr));
@@ -295,7 +293,7 @@ void essu_session::node_receive(TStream &udp_stream, wrapper_packet_type &pckt,
     f.get();
 }
 
-void essu_session::generate_pair_ephemeral_obfs_key(
+void essu::session::generate_pair_ephemeral_obfs_key(
     network::buffer_address_type own_addr, network::buffer_address_type remote_addr,
     noise::noise_role role, const noise_context_type::dh_key_type &local_public_key,
     const noise_context_type::dh_key_type &remote_public_key,
@@ -338,7 +336,7 @@ void essu_session::generate_pair_ephemeral_obfs_key(
     std::copy(keystream.begin() + noise_context_type::dh_key_type{}.size(),
               keystream.end(), ephemeral_obfs_key2.begin());
 }
-void essu_session::generate_pair_session_unique_value(
+void essu::session::generate_pair_session_unique_value(
     const noise_context_type::hash_state::buffer_type       &buffer_handshake_hash,
     const noise_context_type::buffer_handshake_payload_type &buffer_handshake_payload,
     buffer_unique_value_type &output_value1, buffer_unique_value_type &output_value2) {
