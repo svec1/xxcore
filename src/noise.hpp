@@ -281,7 +281,7 @@ public:
     };
 
 public:
-    noise_context();
+    noise_context() = default;
 
     noise_context(noise_context &&)                 = delete;
     noise_context(const noise_context &)            = delete;
@@ -537,12 +537,6 @@ void noise_context<_config>::hash_state::hkdf(std::span<const noheap::rbyte> buf
 }
 
 // Noise context
-template<noise_context_config _config>
-noise_context<_config>::noise_context() {
-    std::size_t ret;
-    if ((ret = noise_init()) != NOISE_ERROR_NONE)
-        handle_error(ret, "Failed to init noise.");
-}
 template<noise_context_config _config>
 noise_context<_config>::~noise_context() {
     this->dump();
