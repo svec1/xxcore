@@ -240,7 +240,6 @@ public:
                         NoiseCipherState *_decrypt_state);
 
         void check_completed_handshake();
-        void dump();
         void dump_states();
 
     public:
@@ -251,8 +250,6 @@ public:
         NoiseCipherState *encrypt_state = nullptr;
         NoiseCipherState *decrypt_state = nullptr;
         NoiseRandState   *randstate     = nullptr;
-
-        bool initialized_states = false;
     };
 
     struct hash_state {
@@ -361,14 +358,14 @@ noise_context<_config>::cipher_state &
     std::swap(this->randstate, handle.randstate);
     std::swap(this->encrypt_state, handle.encrypt_state);
     std::swap(this->decrypt_state, handle.decrypt_state);
-    this->initialized_states = std::move(handle.initialized_states);
 
-    handle.initialized_states = false;
     return *this;
 }
 template<noise_context_config _config>
 noise_context<_config>::cipher_state::~cipher_state() {
-    this->dump();
+    if (randstate)
+        noise_randstate_free(randstate);
+    dump_states();
 }
 template<noise_context_config _config>
 void noise_context<_config>::cipher_state::encrypt(std::span<noheap::rbyte> buffer_ad) {
@@ -403,12 +400,14 @@ void noise_context<_config>::cipher_state::pad() {
 }
 template<noise_context_config _config>
 void noise_context<_config>::cipher_state::rekey_encrypt() {
+    check_completed_handshake();
     std::size_t ret;
     if ((ret = noise_cipherstate_rekey(encrypt_state)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to rekey for encrypt state.");
 }
 template<noise_context_config _config>
 void noise_context<_config>::cipher_state::rekey_decrypt() {
+    check_completed_handshake();
     std::size_t ret;
     if ((ret = noise_cipherstate_rekey(decrypt_state)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to rekey for decrypt state.");
@@ -435,8 +434,6 @@ void noise_context<_config>::cipher_state::set_key(const dh_key_type &key) {
              key.size()))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to set key.");
-
-    initialized_states = true;
 }
 template<noise_context_config _config>
 bool noise_context<_config>::cipher_state::valid() const {
@@ -455,33 +452,26 @@ void noise_context<_config>::cipher_state::set_states(NoiseCipherState *_encrypt
                                                       NoiseCipherState *_decrypt_state) {
     dump_states();
 
-    encrypt_state      = _encrypt_state;
-    decrypt_state      = _decrypt_state;
-    initialized_states = true;
+    encrypt_state = _encrypt_state;
+    decrypt_state = _decrypt_state;
 }
 template<noise_context_config _config>
 void noise_context<_config>::cipher_state::check_completed_handshake() {
-    if (!initialized_states)
+    if (!noise_cipherstate_has_key(encrypt_state)
+        && !noise_cipherstate_has_key(decrypt_state))
         handle_error(0, "The states is not initialized.");
 }
 template<noise_context_config _config>
-void noise_context<_config>::cipher_state::dump() {
-    if (!initialized_states)
+void noise_context<_config>::cipher_state::dump_states() {
+    if (encrypt_state == nullptr)
         return;
 
-    noise_randstate_free(randstate);
-    dump_states();
-}
-template<noise_context_config _config>
-void noise_context<_config>::cipher_state::dump_states() {
     std::size_t ret;
     if ((ret = noise_cipherstate_free(encrypt_state)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to free encrypt cipher state.");
     if (encrypt_state != decrypt_state)
         if ((ret = noise_cipherstate_free(decrypt_state)) != NOISE_ERROR_NONE)
             handle_error(ret, "Failed to free decrypt cipher state.");
-
-    initialized_states = false;
 }
 
 // Hash state
@@ -555,7 +545,7 @@ void noise_context<_config>::dump() {
         return;
 
     noise_handshakestate_free(handshakestate);
-    cipher_st.dump();
+    cipher_st.dump_states();
     handshake_buffer = {};
     handshakestate   = nullptr;
 }
@@ -575,11 +565,6 @@ void noise_context<_config>::stop() {
                                           &cipher_st.decrypt_state))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to split handshake.");
-
-    if ((ret = noise_randstate_new(&cipher_st.randstate)) != NOISE_ERROR_NONE)
-        handle_error(ret, "Failed to init randstate.");
-
-    cipher_st.initialized_states = true;
 }
 template<noise_context_config _config>
 noise_context<_config>::noise_buffer_view &
