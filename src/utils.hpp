@@ -34,7 +34,7 @@ constexpr std::size_t get_now_ms() {
 
 namespace noheap {
 
-static constexpr std::size_t output_buffer_size = 1024;
+constexpr std::size_t output_buffer_size = 1024;
 
 using byte  = std::int_least8_t;
 using ubyte = std::uint_least8_t;
@@ -666,24 +666,36 @@ private:
     noheap::log_impl::owner_impl::buffer_type    buffer_owner;
 };
 
+template<typename TReturn>
 struct future_wrapper {
+    using future_type = std::future<TReturn>;
+
+public:
     future_wrapper() = default;
 
     template<typename Func>
-    future_wrapper(Func &&func) {
-        perform(std::forward<Func>(func));
-    }
+        requires std::same_as<std::invoke_result_t<std::decay_t<Func>>, TReturn>
+    future_wrapper(Func &&func)
+        : future_object(std::async(std::launch::async, std::forward<Func>(func))) {}
+
+    future_wrapper(future_type &&_future_object)
+        : future_object(std::move(_future_object)) {}
+
+    future_wrapper(future_wrapper &&func)
+        : future_object(std::move(func.future_object)) {}
 
 public:
-    template<typename Func>
-    void perform(Func &&func) {
-        future_object = std::async(std::launch::async, std::forward<Func>(func));
+    TReturn get() {
+        if constexpr (!std::same_as<TReturn, void>)
+            return future_object.get();
     }
-    void get() { future_object.get(); }
-    bool valid() { return future_object.valid(); }
+    bool valid() const { return future_object.valid(); }
 
 public:
-    bool is_completed(std::size_t timeout_ms) {
+    bool is_completed(std::size_t timeout_ms) const {
+        if (!valid())
+            return false;
+
         switch (std::future_status status =
                     future_object.wait_for(std::chrono::milliseconds(timeout_ms));
                 status) {
@@ -699,7 +711,10 @@ public:
     }
 
 private:
-    std::future<void> future_object;
+    future_type future_object;
 };
+
+template<typename Func>
+future_wrapper(Func &&func) -> future_wrapper<std::invoke_result_t<std::decay_t<Func>>>;
 
 #endif

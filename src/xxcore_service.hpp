@@ -10,14 +10,47 @@
 
 using namespace boost;
 
+// For test
+struct test_action final : network::action<essu::packet_type> {
+    static constexpr std::size_t max_stream_size = 32;
+
+    using audio_flow_type = audio_flow<max_stream_size>;
+
+public:
+    void init_packet(test_action::packet_type &pckt) {
+        audio_flow_type::buffer_type buffer_tmp;
+        audio.pop(buffer_tmp);
+        pckt->units[0].header.type = decltype(pckt->units[0].header.type)::data;
+        std::copy(reinterpret_cast<noheap::rbyte *>(buffer_tmp.begin()),
+                  reinterpret_cast<noheap::rbyte *>(buffer_tmp.end()),
+                  pckt->units[0].buffer.begin());
+        for (std::size_t i = 1; i < pckt->units.size(); ++i) {
+            pckt->units[i].header.type = decltype(pckt->units[0].header.type)::data;
+            pckt->units[i].header.flag = decltype(pckt->units[0].header.flag)::drop;
+        }
+    }
+    void process_packet(test_action::packet_type &&pckt) {
+        audio_flow_type::buffer_type buffer_tmp;
+        std::copy(pckt->units[0].buffer.begin(),
+                  pckt->units[0].buffer.begin() + buffer_tmp.size(),
+                  reinterpret_cast<noheap::rbyte *>(buffer_tmp.begin()));
+        audio.push(std::move(buffer_tmp), false);
+    }
+
+private:
+    audio_flow_type audio;
+};
+
 class xxcore_service {
 public:
     static constexpr std::size_t max_size_config = BOOST_JSON_STACK_BUFFER_SIZE;
     using buffer_config_type = noheap::buffer_type<char, max_size_config>;
 
-    using noise_context_type = essu::session::noise_context_type;
-    using address_type       = essu::session::net_stream_udp::address_type;
-    using port_type          = essu::session::net_stream_udp::port_type;
+    using udp_stream         = network::udp_stream<test_action, network::ipv::v4>;
+    using address_type       = udp_stream::address_type;
+    using port_type          = udp_stream::port_type;
+    using session_type       = essu::session<udp_stream>;
+    using noise_context_type = session_type::noise_context_type;
 
 private:
     // Config for noise handshake.
@@ -28,37 +61,6 @@ private:
         noise_context_type::dh_key_type local_public_key;
         noise_context_type::dh_key_type remote_public_key;
         noise_context_type::dh_key_type pre_shared_key;
-    };
-
-    // For test
-    struct test_action final : network::action<essu::packet_type> {
-        static constexpr std::size_t max_stream_size = 32;
-
-        using audio_flow_type = audio_flow<max_stream_size>;
-
-    public:
-        void init_packet(test_action::packet_type &pckt) {
-            audio_flow_type::buffer_type buffer_tmp;
-            audio.pop(buffer_tmp);
-            pckt->units[0].header.type = decltype(pckt->units[0].header.type)::data;
-            std::copy(reinterpret_cast<noheap::rbyte *>(buffer_tmp.begin()),
-                      reinterpret_cast<noheap::rbyte *>(buffer_tmp.end()),
-                      pckt->units[0].buffer.begin());
-            for (std::size_t i = 1; i < pckt->units.size(); ++i) {
-                pckt->units[i].header.type = decltype(pckt->units[0].header.type)::data;
-                pckt->units[i].header.flag = decltype(pckt->units[0].header.flag)::drop;
-            }
-        }
-        void process_packet(test_action::packet_type &&pckt) {
-            audio_flow_type::buffer_type buffer_tmp;
-            std::copy(pckt->units[0].buffer.begin(),
-                      pckt->units[0].buffer.begin() + buffer_tmp.size(),
-                      reinterpret_cast<noheap::rbyte *>(buffer_tmp.begin()));
-            audio.push(std::move(buffer_tmp), false);
-        }
-
-    private:
-        audio_flow_type audio;
     };
 
 public:
@@ -75,21 +77,31 @@ private:
 private:
     config_type config{};
 
+    udp_stream   stream;
     address_type addr;
-    port_type    port;
 };
 
 xxcore_service::xxcore_service(address_type &&_addr, asio::ip::port_type _port)
-    : addr(_addr), port(_port) {
+    : stream(_port), addr(_addr) {
 }
 
 void xxcore_service::run() {
-    essu::session stream(addr, port);
+    future_wrapper<void> async_run([this]() { this->stream.run(); });
+    asio::executor_work_guard<decltype(stream.get_executor())> work_guard(
+        stream.get_executor());
 
-    stream.establish_connection(
-        config.role, {}, {config.local_private_key, config.local_public_key},
-        std::move(config.remote_public_key), std::move(config.pre_shared_key));
-    stream.run_stream_session<test_action>();
+    session_type session_test(stream, addr, config.role, {},
+                              {config.local_private_key, config.local_public_key},
+                              std::move(config.remote_public_key),
+                              std::move(config.pre_shared_key));
+
+    try {
+        session_test.establish_connection();
+        session_test.run_stream_session();
+    } catch (...) {
+        work_guard.reset();
+        throw;
+    }
 }
 
 void xxcore_service::configurate(buffer_config_type &buffer, bool generate_new_keypair) {

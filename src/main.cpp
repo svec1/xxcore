@@ -5,8 +5,8 @@
 using namespace boost;
 using dba = stream_audio::default_base_audio;
 
-static constexpr log_handler log_main{{}};
-static constexpr auto        name_config_file = "xxcore.json";
+constexpr log_handler log_main{{}};
+constexpr auto        name_config_file = "xxcore.json";
 
 struct xxcore_config {
     std::string_view             device;

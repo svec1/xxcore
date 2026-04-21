@@ -30,19 +30,23 @@ enum class noise_action : std::uint16_t {
 };
 
 enum class ecdh_type : std::uint16_t {
-    UNKNOWN                 = 0,
-    x25519                  = NOISE_DH_CURVE25519,
-    x25519_hybrid_kyber1024 = NOISE_DH_CURVE25519 ^ NOISE_DH_KYBER1024,
+    UNKNOWN          = 0,
+    X25519           = NOISE_DH_CURVE25519,
+    X25519_KYBER1024 = NOISE_DH_CURVE25519 ^ NOISE_DH_KYBER1024,
 };
 
 enum class cipher_type : std::uint16_t {
     UNKNOWN    = 0,
     CHACHAPOLY = NOISE_CIPHER_CHACHAPOLY,
+    AESGCM     = NOISE_CIPHER_AESGCM,
 };
 
 enum class hash_type : std::uint16_t {
     UNKNOWN = 0,
-    BLAKE2b = NOISE_HASH_BLAKE2b,
+    SHA256  = NOISE_HASH_SHA256,
+    SHA512  = NOISE_HASH_SHA512,
+    SHA3256 = NOISE_HASH_SHA512,
+    SHA3512 = NOISE_HASH_SHA3512,
 };
 
 noise_pattern get_noise_pattern(std::string_view pattern_string) {
@@ -62,30 +66,30 @@ noise_role get_noise_role(std::string_view role_string) {
 }
 template<noise_pattern pattern, ecdh_type ecdh>
 consteval std::size_t pattern_ecdh_is_compatible() {
-    if constexpr ((pattern == noise_pattern::XK && ecdh == ecdh_type::x25519)
+    if constexpr ((pattern == noise_pattern::XK && ecdh == ecdh_type::X25519)
                   || (pattern == noise_pattern::XK_HFS
-                      && ecdh == ecdh_type::x25519_hybrid_kyber1024))
+                      && ecdh == ecdh_type::X25519_KYBER1024))
         return true;
     return false;
 }
 
 template<ecdh_type ecdh>
 consteval std::size_t get_dh_key_size() {
-    if constexpr (ecdh == ecdh_type::x25519 || ecdh == ecdh_type::x25519_hybrid_kyber1024)
+    if constexpr (ecdh == ecdh_type::X25519 || ecdh == ecdh_type::X25519_KYBER1024)
         return 32;
     else
         static_assert(false, "The passed ECDH type is not supported.");
 }
 template<ecdh_type ecdh>
 consteval std::size_t get_kem_key_size() {
-    if constexpr (ecdh == ecdh_type::x25519_hybrid_kyber1024)
+    if constexpr (ecdh == ecdh_type::X25519_KYBER1024)
         return 1568;
     else
         return 0;
 }
 template<ecdh_type ecdh>
 consteval std::size_t get_kem_cipher_text_size() {
-    if constexpr (ecdh == ecdh_type::x25519_hybrid_kyber1024)
+    if constexpr (ecdh == ecdh_type::X25519_KYBER1024)
         return 1568;
     else
         return 0;
@@ -95,13 +99,15 @@ template<cipher_type cipher>
 consteval std::size_t get_mac_size() {
     if constexpr (cipher == cipher_type::CHACHAPOLY)
         return 16;
+    else if constexpr (cipher == cipher_type::AESGCM)
+        return 16;
     else
         static_assert(false, "The passed cipher type is not supported.");
 }
 
 template<hash_type hash>
 consteval std::size_t get_hash_size() {
-    if constexpr (hash == hash_type::BLAKE2b)
+    if constexpr (hash == hash_type::SHA512 || hash == hash_type::SHA3512)
         return 64;
     else
         static_assert(false, "The passed hash type is not supported.");
@@ -110,12 +116,12 @@ consteval std::size_t get_hash_size() {
 template<std::size_t size>
 using buffer_type = noheap::buffer_bytes_type<size, noheap::rbyte>;
 
-template<noise::noise_pattern _pattern, noise::ecdh_type _ecdh>
+template<noise_pattern _pattern, ecdh_type _ecdh, cipher_type _cipher, hash_type _hash>
 struct noise_context_config {
     static constexpr noise_pattern pattern = _pattern;
     static constexpr ecdh_type     ecdh    = _ecdh;
-    static constexpr cipher_type   cipher  = cipher_type::CHACHAPOLY;
-    static constexpr hash_type     hash    = hash_type::BLAKE2b;
+    static constexpr cipher_type   cipher  = _cipher;
+    static constexpr hash_type     hash    = _hash;
 
 private:
     static_assert(noise::pattern_ecdh_is_compatible<pattern, ecdh>(),
@@ -128,8 +134,7 @@ public:
     static constexpr noise_context_config config = _config;
 
 private:
-    static constexpr bool hybrid_kyber1024 =
-        (config.ecdh == ecdh_type::x25519_hybrid_kyber1024);
+    static constexpr bool hybrid_kyber1024 = (config.ecdh == ecdh_type::X25519_KYBER1024);
     static constexpr ecdh_type ecdh =
         hybrid_kyber1024
             ? ecdh_type(static_cast<std::uint16_t>(config.ecdh) ^ NOISE_DH_KYBER1024)
@@ -212,15 +217,17 @@ public:
 
     public:
         cipher_state();
-        cipher_state(cipher_state &&handle);
-        cipher_state &operator=(cipher_state &&);
 
+        cipher_state(cipher_state &&)                 = delete;
         cipher_state(const cipher_state &)            = delete;
         cipher_state &operator=(const cipher_state &) = delete;
 
         ~cipher_state();
 
     public:
+        void init(cipher_state &&other);
+        void dump();
+
         void encrypt(std::span<noheap::rbyte> buffer_ad);
         void decrypt(std::span<noheap::rbyte> buffer_ad);
         void pad();
@@ -232,15 +239,12 @@ public:
         void set_key(const dh_key_type &key);
 
         bool valid() const;
-        bool valid_encrypt() const;
-        bool valid_decrypt() const;
 
     private:
         void set_states(NoiseCipherState *_encrypt_state,
                         NoiseCipherState *_decrypt_state);
 
         void check_completed_handshake();
-        void dump_states();
 
     public:
         noise_buffer_view input_buffer{};
@@ -253,14 +257,12 @@ public:
     };
 
     struct hash_state {
-        static constexpr hash_type hash = hash_type::BLAKE2b;
-        using buffer_type               = buffer_type<get_hash_size<hash>()>;
+        using buffer_type = buffer_type<get_hash_size<config.hash>()>;
 
     public:
         hash_state();
-        hash_state(hash_state &&handle);
-        hash_state &operator=(hash_state &&);
 
+        hash_state(hash_state &&handle)           = delete;
         hash_state(const hash_state &)            = delete;
         hash_state &operator=(const hash_state &) = delete;
 
@@ -290,12 +292,14 @@ public:
     void init(noise_role _role);
     void dump();
 
+    void fallback();
+    void fallback_to_original();
     void start();
     void stop();
 
     noise_buffer_view &get_handshake_buffer();
     noise_buffer_view &get_handshake_payload_buffer();
-    cipher_state       get_cipher_state();
+    void               get_cipher_state(cipher_state &_cipher_state);
 
 public:
     noise_action get_action() const;
@@ -349,23 +353,33 @@ noise_context<_config>::cipher_state::cipher_state() {
     decrypt_state = encrypt_state;
 }
 template<noise_context_config _config>
-noise_context<_config>::cipher_state::cipher_state(cipher_state &&handle) {
-    this->operator=(std::move(handle));
+void noise_context<_config>::cipher_state::init(cipher_state &&other) {
+    dump();
+
+    encrypt_state = other.encrypt_state;
+    decrypt_state = other.decrypt_state;
+
+    other.encrypt_state = other.decrypt_state = nullptr;
 }
 template<noise_context_config _config>
-noise_context<_config>::cipher_state &
-    noise_context<_config>::cipher_state::operator=(cipher_state &&handle) {
-    std::swap(this->randstate, handle.randstate);
-    std::swap(this->encrypt_state, handle.encrypt_state);
-    std::swap(this->decrypt_state, handle.decrypt_state);
+void noise_context<_config>::cipher_state::dump() {
+    if (encrypt_state == nullptr)
+        return;
 
-    return *this;
+    std::size_t ret;
+    if ((ret = noise_cipherstate_free(encrypt_state)) != NOISE_ERROR_NONE)
+        handle_error(ret, "Failed to free encrypt cipher state.");
+    if (encrypt_state != decrypt_state)
+        if ((ret = noise_cipherstate_free(decrypt_state)) != NOISE_ERROR_NONE)
+            handle_error(ret, "Failed to free decrypt cipher state.");
+
+    encrypt_state = decrypt_state = nullptr;
 }
 template<noise_context_config _config>
 noise_context<_config>::cipher_state::~cipher_state() {
-    if (randstate)
-        noise_randstate_free(randstate);
-    dump_states();
+    dump();
+
+    noise_randstate_free(randstate);
 }
 template<noise_context_config _config>
 void noise_context<_config>::cipher_state::encrypt(std::span<noheap::rbyte> buffer_ad) {
@@ -437,60 +451,31 @@ void noise_context<_config>::cipher_state::set_key(const dh_key_type &key) {
 }
 template<noise_context_config _config>
 bool noise_context<_config>::cipher_state::valid() const {
-    return valid_encrypt() && valid_decrypt();
-}
-template<noise_context_config _config>
-bool noise_context<_config>::cipher_state::valid_encrypt() const {
-    return encrypt_state && noise_cipherstate_has_key(encrypt_state);
-}
-template<noise_context_config _config>
-bool noise_context<_config>::cipher_state::valid_decrypt() const {
-    return decrypt_state && noise_cipherstate_has_key(decrypt_state);
+    return encrypt_state && decrypt_state && noise_cipherstate_has_key(encrypt_state)
+           && noise_cipherstate_has_key(decrypt_state);
 }
 template<noise_context_config _config>
 void noise_context<_config>::cipher_state::set_states(NoiseCipherState *_encrypt_state,
                                                       NoiseCipherState *_decrypt_state) {
-    dump_states();
+    dump();
 
     encrypt_state = _encrypt_state;
     decrypt_state = _decrypt_state;
 }
 template<noise_context_config _config>
 void noise_context<_config>::cipher_state::check_completed_handshake() {
-    if (!noise_cipherstate_has_key(encrypt_state)
-        && !noise_cipherstate_has_key(decrypt_state))
+    if (!valid())
         handle_error(0, "The states is not initialized.");
-}
-template<noise_context_config _config>
-void noise_context<_config>::cipher_state::dump_states() {
-    if (encrypt_state == nullptr)
-        return;
-
-    std::size_t ret;
-    if ((ret = noise_cipherstate_free(encrypt_state)) != NOISE_ERROR_NONE)
-        handle_error(ret, "Failed to free encrypt cipher state.");
-    if (encrypt_state != decrypt_state)
-        if ((ret = noise_cipherstate_free(decrypt_state)) != NOISE_ERROR_NONE)
-            handle_error(ret, "Failed to free decrypt cipher state.");
 }
 
 // Hash state
 template<noise_context_config _config>
 noise_context<_config>::hash_state::hash_state() {
     std::size_t ret;
-    if ((ret = noise_hashstate_new_by_id(&hashstate, static_cast<std::uint16_t>(hash)))
+    if ((ret = noise_hashstate_new_by_id(&hashstate,
+                                         static_cast<std::uint16_t>(config.hash)))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to init hash state.");
-}
-template<noise_context_config _config>
-noise_context<_config>::hash_state::hash_state(hash_state &&handle) {
-    this->operator=(std::move(handle));
-}
-template<noise_context_config _config>
-noise_context<_config>::hash_state &
-    noise_context<_config>::hash_state::operator=(hash_state &&handle) {
-    std::swap(this->hashstate, handle.hashstate);
-    return *this;
 }
 template<noise_context_config _config>
 noise_context<_config>::hash_state::~hash_state() {
@@ -545,9 +530,22 @@ void noise_context<_config>::dump() {
         return;
 
     noise_handshakestate_free(handshakestate);
-    cipher_st.dump_states();
+    cipher_st.dump();
     handshake_buffer = {};
     handshakestate   = nullptr;
+}
+template<noise_context_config _config>
+void noise_context<_config>::fallback() {
+    std::size_t ret;
+    if ((ret = noise_handshakestate_fallback(handshakestate)) != NOISE_ERROR_NONE)
+        handle_error(ret, "Failed to fallback.");
+}
+template<noise_context_config _config>
+void noise_context<_config>::fallback_to_original() {
+    std::size_t ret;
+    if ((ret = noise_handshakestate_fallback_to(handshakestate, nid_static.pattern_id))
+        != NOISE_ERROR_NONE)
+        handle_error(ret, "Failed to fallback to original.");
 }
 template<noise_context_config _config>
 void noise_context<_config>::start() {
@@ -577,8 +575,8 @@ noise_context<_config>::noise_buffer_view &
     return handshake_payload_buffer;
 }
 template<noise_context_config _config>
-noise_context<_config>::cipher_state noise_context<_config>::get_cipher_state() {
-    return std::move(cipher_st);
+void noise_context<_config>::get_cipher_state(cipher_state &_cipher_st) {
+    _cipher_st.init(std::move(cipher_st));
 }
 
 template<noise_context_config _config>

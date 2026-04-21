@@ -4,4 +4,3 @@
 [submodule "thirdparty/cnoise"]
 	path = thirdparty/cnoise
 	url = https://github.com/svec1/cnoise.git
-	branch = main

@@ -1,0 +1,319 @@
+#include "essu_base.hpp"
+
+namespace essu {
+
+// Noise handshake context for establishing shared secret key
+struct noise_handshake_context {
+public:
+    using noise_context_type       = essu::unit_type::noise_context_type;
+    using buffer_unique_value_type = noise::buffer_type<32>;
+
+public:
+    noise_handshake_context() = default;
+    noise_handshake_context(noise_handshake_context &&other);
+    noise_handshake_context &operator=(noise_handshake_context &&other);
+    noise_handshake_context(
+        noise::noise_role role, noise_context_type::prologue_extention_type ext,
+        const noise_context_type::keypair_type        &local_keypair,
+        const noise_context_type::dh_key_type         &remote_public_key,
+        const noise_context_type::pre_shared_key_type &pre_shared_key);
+
+public:
+    void init_packet(packet_type &pckt);
+    void process_packet(packet_type &&pckt);
+
+public:
+    noise::noise_action                        get_action() const;
+    noise::noise_role                          get_role() const;
+    buffer_unique_value_type                   get_unique_value() const;
+    typename noise_context_type::cipher_state &get_payload_cipher_state();
+    typename noise_context_type::cipher_state &get_header_cipher_state();
+
+public:
+    void start();
+    void stop();
+
+private:
+    void check_noise_action(noise::noise_action expected);
+    void generate_pair_ephemeral_obfs_key();
+    void generate_posthandshake_unique_values();
+
+private:
+    noise_context_type                        noise_ctx;
+    typename noise_context_type::cipher_state payload_cipher_state;
+    typename noise_context_type::cipher_state header_cipher_state;
+
+    noise::noise_role                           role;
+    noise_context_type::prologue_extention_type ext;
+    noise_context_type::keypair_type            local_keypair;
+    noise_context_type::dh_key_type             remote_public_key;
+    noise_context_type::pre_shared_key_type     pre_shared_key;
+    noise_context_type::dh_key_type             ephemeral_obfs_key;
+
+    typename noise_context_type::buffer_handshake_packet_type buffer_handshake_message{};
+    std::size_t                                               number_handshake_parts;
+    std::size_t                                               offset_noise_handshake_unit;
+    bool                                                      fragmentation;
+
+    typename noise_context_type::buffer_handshake_payload_type handshake_payload;
+    typename noise_context_type::hash_state::buffer_type       handshake_hash;
+    buffer_unique_value_type                                   unique_value;
+};
+
+} // namespace essu
+essu::noise_handshake_context::noise_handshake_context(noise_handshake_context &&other)
+    : noise_handshake_context(other.role, other.ext, other.local_keypair,
+                              other.remote_public_key, other.pre_shared_key) {
+}
+essu::noise_handshake_context::noise_handshake_context(
+    noise::noise_role _role, noise_context_type::prologue_extention_type _ext,
+    const noise_context_type::keypair_type        &_local_keypair,
+    const noise_context_type::dh_key_type         &_remote_public_key,
+    const noise_context_type::pre_shared_key_type &_pre_shared_key)
+    : role(_role), ext(_ext), local_keypair(_local_keypair),
+      pre_shared_key(_pre_shared_key) {
+}
+essu::noise_handshake_context &
+    essu::noise_handshake_context::operator=(noise_handshake_context &&other) {
+    role              = other.role;
+    ext               = other.ext;
+    local_keypair     = other.local_keypair;
+    remote_public_key = other.remote_public_key;
+    pre_shared_key    = other.pre_shared_key;
+
+    return *this;
+}
+void essu::noise_handshake_context::init_packet(packet_type &pckt) {
+    check_noise_action(noise::noise_action::WRITE_MESSAGE);
+
+    auto &payload_unit = pckt->units[0];
+
+    // Gets noise message
+    if (!fragmentation) {
+        // Generates random value
+        if (number_handshake_parts == 2) {
+            handshake_payload =
+                noheap::to_buffer<std::decay_t<decltype(handshake_payload)>>(
+                    noheap::get_random_bytes<
+                        noheap::buffer_size<decltype(handshake_payload)>>());
+            noise_ctx.get_handshake_payload_buffer().set(
+                {handshake_payload.data(), handshake_payload.size()},
+                handshake_payload.size());
+        }
+
+        noise_ctx.get_handshake_buffer().set(
+            {buffer_handshake_message.data(), buffer_handshake_message.size()}, 0);
+        noise_ctx.set_handshake_message();
+
+        // Adds ephemeral key obfuscation on ephemeral key
+        if (number_handshake_parts == 0) {
+            std::transform(buffer_handshake_message.begin(),
+                           buffer_handshake_message.begin() + ephemeral_obfs_key.size(),
+                           ephemeral_obfs_key.data(), buffer_handshake_message.begin(),
+                           std::bit_xor{});
+        }
+    }
+
+    // Copy payload of the noise message
+    std::copy(buffer_handshake_message.begin() + offset_noise_handshake_unit,
+              buffer_handshake_message.begin() + offset_noise_handshake_unit
+                  + payload_unit.buffer.size(),
+              reinterpret_cast<noheap::rbyte *>(payload_unit.buffer.begin()));
+    offset_noise_handshake_unit += payload_unit.buffer.size();
+
+    // Determines type of payload data
+    if (number_handshake_parts == 0)
+        payload_unit.header.type = unit_type::payload_type::session_request;
+    else if (number_handshake_parts == 1)
+        payload_unit.header.type = unit_type::payload_type::session_created;
+    else if (number_handshake_parts == 2)
+        payload_unit.header.type = unit_type::payload_type::session_confirmed;
+
+    // If fragmentation
+    if (offset_noise_handshake_unit < noise_ctx.get_handshake_buffer().get().size) {
+        payload_unit.header.flag = decltype(payload_unit.header.flag)::wait_next;
+        fragmentation            = true;
+        return;
+    }
+
+    payload_unit.header.flag    = decltype(payload_unit.header.flag)::none;
+    buffer_handshake_message    = {};
+    offset_noise_handshake_unit = 0;
+    fragmentation               = false;
+
+    ++number_handshake_parts;
+}
+void essu::noise_handshake_context::process_packet(packet_type &&pckt) {
+    check_noise_action(noise::noise_action::READ_MESSAGE);
+
+    auto &payload_unit = pckt->units[0];
+    if (payload_unit.header.flag == decltype(payload_unit.header.flag)::drop)
+        throw noheap::runtime_error("Noise handshake dropped.");
+
+    // Determines size of payload data
+    std::size_t payload_data_size;
+    if (number_handshake_parts == 0)
+        payload_data_size = unit_type::config_type::hs1_size;
+    else if (number_handshake_parts == 1)
+        payload_data_size = unit_type::config_type::hs2_size;
+    else if (number_handshake_parts == 2)
+        payload_data_size = unit_type::config_type::hs3_size;
+
+    // Copies accepted unit to buffer of noise handshake message
+    std::copy(payload_unit.buffer.begin(), payload_unit.buffer.end(),
+              buffer_handshake_message.begin() + offset_noise_handshake_unit);
+    offset_noise_handshake_unit += payload_data_size;
+
+    // If fragmentation
+    if (payload_data_size >= payload_unit.buffer.size()
+        && payload_unit.header.flag == decltype(payload_unit.header.flag)::wait_next)
+        return;
+
+    if (number_handshake_parts == 0)
+        // Deletes ephemeral key obfuscation
+        std::transform(buffer_handshake_message.begin(),
+                       buffer_handshake_message.begin() + ephemeral_obfs_key.size(),
+                       ephemeral_obfs_key.begin(), buffer_handshake_message.begin(),
+                       std::bit_xor{});
+    else if (number_handshake_parts == 2)
+        // Sets buffer to get random value
+        noise_ctx.get_handshake_payload_buffer().set(
+            {handshake_payload.data(), handshake_payload.size()}, 0);
+
+    // Sets noise message
+    noise_ctx.get_handshake_buffer().set(
+        {buffer_handshake_message.data(), offset_noise_handshake_unit},
+        payload_data_size);
+    noise_ctx.get_handshake_message();
+
+    buffer_handshake_message    = {};
+    offset_noise_handshake_unit = 0;
+    ++number_handshake_parts;
+}
+
+typename essu::noise_handshake_context::noise_context_type::cipher_state &
+    essu::noise_handshake_context::get_payload_cipher_state() {
+    return payload_cipher_state;
+}
+typename essu::noise_handshake_context::noise_context_type::cipher_state &
+    essu::noise_handshake_context::get_header_cipher_state() {
+    return header_cipher_state;
+}
+noise::noise_action essu::noise_handshake_context::get_action() const {
+    return fragmentation ? noise::noise_action::WRITE_MESSAGE : noise_ctx.get_action();
+}
+noise::noise_role essu::noise_handshake_context::get_role() const {
+    return role;
+}
+essu::noise_handshake_context::buffer_unique_value_type
+    essu::noise_handshake_context::get_unique_value() const {
+    return unique_value;
+}
+
+void essu::noise_handshake_context::start() {
+    check_noise_action(noise::noise_action::NONE);
+
+    number_handshake_parts      = 0;
+    offset_noise_handshake_unit = 0;
+    fragmentation               = false;
+    buffer_handshake_message    = {};
+    handshake_payload           = {};
+    handshake_hash              = {};
+    payload_cipher_state.init({});
+    header_cipher_state.init({});
+
+    noise_ctx.init(role);
+    noise_ctx.set_prologue(ext);
+    noise_ctx.set_local_keypair(local_keypair);
+    noise_ctx.set_remote_public_key(remote_public_key);
+    noise_ctx.set_pre_shared_key(pre_shared_key);
+    noise_ctx.start();
+    generate_pair_ephemeral_obfs_key();
+}
+void essu::noise_handshake_context::stop() {
+    check_noise_action(noise::noise_action::SPLIT);
+
+    noise_ctx.stop();
+    handshake_hash = noise_ctx.get_handshake_hash();
+    noise_ctx.get_cipher_state(payload_cipher_state);
+    noise_ctx.dump();
+
+    generate_posthandshake_unique_values();
+}
+
+void essu::noise_handshake_context::check_noise_action(noise::noise_action expected) {
+    auto action = noise_ctx.get_action();
+    if (action == noise::noise_action::FAILED)
+        throw noheap::runtime_error("Failed to handshake.");
+    else if (number_handshake_parts > 2)
+        throw noheap::runtime_error("Unexpected behaviour during the noise handshake.");
+
+    if (action == expected)
+        return;
+
+    if (action == noise::noise_action::WRITE_MESSAGE)
+        throw noheap::runtime_error("Expected message to be sent.");
+    else if (action == noise::noise_action::READ_MESSAGE)
+        throw noheap::runtime_error("Expected message to be received.");
+    else
+        throw noheap::runtime_error("Handshake already completed.");
+}
+
+// Generates ephemeral header obfuscation key + ephmeral obfuscation key for hs1
+void essu::noise_handshake_context::generate_pair_ephemeral_obfs_key() {
+    typename noise_context_type::dh_key_type public_key{};
+    const auto xor_public_key_with_addr = [&](const auto &addr) {
+        std::transform(public_key.begin(), public_key.begin() + addr.size(),
+                       reinterpret_cast<const noheap::rbyte *>(addr.begin()),
+                       public_key.begin(), std::bit_xor{});
+    };
+
+    // Derives shared key using own and remote public keys
+    xor_public_key_with_addr(local_keypair.pub);
+    xor_public_key_with_addr(remote_public_key);
+
+    // Gets 32 bytes-hash of public key
+    auto public_key_hash =
+        noheap::clip_buffer<32, 0>(typename noise_context_type::hash_state{}.get_hash(
+            {public_key.data(), public_key.size()}));
+
+    // Generates keystream
+    noise::buffer_type<noheap::buffer_size<noise_context_type::dh_key_type> * 2
+                       + noise_context_type::mac_size>
+                                     keystream{};
+    noise_context_type::cipher_state cipher_tmp;
+    cipher_tmp.set_key(public_key_hash);
+    cipher_tmp.input_buffer.set({keystream.data(), keystream.size()},
+                                keystream.size() - noise_context_type::mac_size);
+    cipher_tmp.encrypt({});
+
+    header_cipher_state.set_key(
+        noheap::clip_buffer<noise_context_type::dh_key_type{}.size(), 0>(keystream));
+    std::copy(keystream.begin() + noise_context_type::dh_key_type{}.size(),
+              keystream.end(), ephemeral_obfs_key.begin());
+}
+
+// Generates posthandshake header obfuscation key + unique value
+void essu::noise_handshake_context::generate_posthandshake_unique_values() {
+    // Generates unique values
+    std::decay_t<decltype(handshake_hash)> output_tmp1;
+    typename noise_context_type::hash_state{}.hkdf(
+        {handshake_hash.data(), handshake_hash.size()},
+        {handshake_payload.data(), handshake_payload.size()},
+        {output_tmp1.data(), output_tmp1.size()},
+        {unique_value.data(), unique_value.size()});
+
+    // Generates keystream - the header obfuscation key
+    noise::buffer_type<noheap::buffer_size<buffer_unique_value_type>
+                       + noise_context_type::mac_size>
+                                     keystream{};
+    noise_context_type::cipher_state cipher_tmp;
+    cipher_tmp.set_key(
+        noheap::clip_buffer<noise_context_type::dh_key_type{}.size(), 0>(output_tmp1));
+    cipher_tmp.input_buffer.set({keystream.data(), keystream.size()},
+                                keystream.size() - noise_context_type::mac_size);
+    cipher_tmp.encrypt({});
+
+    header_cipher_state.set_key(
+        noheap::clip_buffer<noise_context_type::dh_key_type{}.size(), 0>(keystream));
+}
