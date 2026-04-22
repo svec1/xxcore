@@ -238,15 +238,15 @@ public:
 
         void set_encrypt_nonce(std::uint64_t nonce);
         void set_decrypt_nonce(std::uint64_t nonce);
-        void set_key(const dh_key_type &key);
-
-        bool valid() const;
+        void set_encrypt_key(const dh_key_type &key);
+        void set_decrypt_key(const dh_key_type &key);
 
     private:
         void set_states(NoiseCipherState *_encrypt_state,
                         NoiseCipherState *_decrypt_state);
 
-        void check_completed_handshake();
+        void check_encrypt_key() const;
+        void check_decrypt_key() const;
 
     public:
         noise_buffer_view input_buffer{};
@@ -345,11 +345,13 @@ noise::noise_context<_config>::cipher_state::cipher_state() {
     if ((ret = noise_cipherstate_new_by_id(&encrypt_state,
                                            static_cast<std::uint16_t>(config.cipher)))
         != NOISE_ERROR_NONE)
-        handle_error(ret, "Failed to init cipher state.");
+        handle_error(ret, "Failed to init encrypt cipher state.");
+    if ((ret = noise_cipherstate_new_by_id(&decrypt_state,
+                                           static_cast<std::uint16_t>(config.cipher)))
+        != NOISE_ERROR_NONE)
+        handle_error(ret, "Failed to init decrypt cipher state.");
     if ((ret = noise_randstate_new(&randstate)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to init randstate.");
-
-    decrypt_state = encrypt_state;
 }
 template<noise::noise_context_config _config>
 void noise::noise_context<_config>::cipher_state::init(cipher_state &&other) {
@@ -368,22 +370,20 @@ void noise::noise_context<_config>::cipher_state::dump() {
     std::size_t ret;
     if ((ret = noise_cipherstate_free(encrypt_state)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to free encrypt cipher state.");
-    if (encrypt_state != decrypt_state)
-        if ((ret = noise_cipherstate_free(decrypt_state)) != NOISE_ERROR_NONE)
-            handle_error(ret, "Failed to free decrypt cipher state.");
+    if ((ret = noise_cipherstate_free(decrypt_state)) != NOISE_ERROR_NONE)
+        handle_error(ret, "Failed to free decrypt cipher state.");
 
     encrypt_state = decrypt_state = nullptr;
 }
 template<noise::noise_context_config _config>
 noise::noise_context<_config>::cipher_state::~cipher_state() {
     dump();
-
     noise_randstate_free(randstate);
 }
 template<noise::noise_context_config _config>
 void noise::noise_context<_config>::cipher_state::encrypt(
     std::span<noheap::rbyte> buffer_ad) {
-    check_completed_handshake();
+    check_encrypt_key();
     std::size_t ret;
 
     if ((ret = noise_cipherstate_encrypt_with_ad(
@@ -395,7 +395,7 @@ void noise::noise_context<_config>::cipher_state::encrypt(
 template<noise::noise_context_config _config>
 void noise::noise_context<_config>::cipher_state::decrypt(
     std::span<noheap::rbyte> buffer_ad) {
-    check_completed_handshake();
+    check_decrypt_key();
     std::size_t ret;
     if ((ret = noise_cipherstate_decrypt_with_ad(
              decrypt_state, reinterpret_cast<noheap::ubyte *>(buffer_ad.data()),
@@ -415,45 +415,61 @@ void noise::noise_context<_config>::cipher_state::pad() {
 }
 template<noise::noise_context_config _config>
 void noise::noise_context<_config>::cipher_state::rekey_encrypt() {
-    check_completed_handshake();
+    check_encrypt_key();
     std::size_t ret;
     if ((ret = noise_cipherstate_rekey(encrypt_state)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to rekey for encrypt state.");
 }
 template<noise::noise_context_config _config>
 void noise::noise_context<_config>::cipher_state::rekey_decrypt() {
-    check_completed_handshake();
+    check_decrypt_key();
     std::size_t ret;
     if ((ret = noise_cipherstate_rekey(decrypt_state)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to rekey for decrypt state.");
 }
 template<noise::noise_context_config _config>
 void noise::noise_context<_config>::cipher_state::set_encrypt_nonce(std::uint64_t nonce) {
-    check_completed_handshake();
+    check_encrypt_key();
     std::size_t ret;
     if ((ret = noise_cipherstate_set_nonce(encrypt_state, nonce)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to set encrypting nonce.");
 }
 template<noise::noise_context_config _config>
 void noise::noise_context<_config>::cipher_state::set_decrypt_nonce(std::uint64_t nonce) {
-    check_completed_handshake();
+    check_decrypt_key();
     std::size_t ret;
     if ((ret = noise_cipherstate_set_nonce(decrypt_state, nonce)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to set decrypting nonce.");
 }
 template<noise::noise_context_config _config>
-void noise::noise_context<_config>::cipher_state::set_key(const dh_key_type &key) {
+void noise::noise_context<_config>::cipher_state::set_encrypt_key(
+    const dh_key_type &key) {
     std::size_t ret;
     if ((ret = noise_cipherstate_init_key(
              encrypt_state, reinterpret_cast<const noheap::ubyte *>(key.data()),
              key.size()))
         != NOISE_ERROR_NONE)
-        handle_error(ret, "Failed to set key.");
+        handle_error(ret, "Failed to set encrypt key.");
 }
 template<noise::noise_context_config _config>
-bool noise::noise_context<_config>::cipher_state::valid() const {
-    return encrypt_state && decrypt_state && noise_cipherstate_has_key(encrypt_state)
-           && noise_cipherstate_has_key(decrypt_state);
+void noise::noise_context<_config>::cipher_state::set_decrypt_key(
+    const dh_key_type &key) {
+    std::size_t ret;
+    if ((ret = noise_cipherstate_init_key(
+             decrypt_state, reinterpret_cast<const noheap::ubyte *>(key.data()),
+             key.size()))
+        != NOISE_ERROR_NONE)
+        handle_error(ret, "Failed to set decrypt key.");
+}
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::cipher_state::check_encrypt_key() const {
+    if (!noise_cipherstate_has_key(encrypt_state))
+        handle_error(0, "The encrypt state does not has a key.");
+}
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::cipher_state::check_decrypt_key() const {
+    if (!noise_cipherstate_has_key(decrypt_state))
+        handle_error(0, "The decrypt state does not has a key.");
 }
 template<noise::noise_context_config _config>
 void noise::noise_context<_config>::cipher_state::set_states(
@@ -462,11 +478,6 @@ void noise::noise_context<_config>::cipher_state::set_states(
 
     encrypt_state = _encrypt_state;
     decrypt_state = _decrypt_state;
-}
-template<noise::noise_context_config _config>
-void noise::noise_context<_config>::cipher_state::check_completed_handshake() {
-    if (!valid())
-        handle_error(0, "The states is not initialized.");
 }
 
 // Hash state

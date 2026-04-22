@@ -80,10 +80,9 @@ private:
          find_session_info(network::buffer_address_type addr) const;
     void update_protocol_status(session_info_type &session_info,
                                 const unit_type   &unit) const;
-    noise::buffer_type<sizeof(typename unit_type::header_data_type)>
-        derive_header_obfs_key(
-            typename noise_context_type::cipher_state &header_cipher_state,
-            std::uint32_t                              number) const;
+    noise::buffer_type<header_data_size> derive_header_obfs_key(
+        typename noise_context_type::cipher_state &header_cipher_state,
+        std::uint64_t                              number) const;
 
 private:
     mutable session_info_s_type session_info_s;
@@ -101,23 +100,23 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
             throw noheap::runtime_error("Not found session info.");
         decltype(auto) session_info = *(*session_info_it);
 
-        // Updates protocol status of passed session
-        update_protocol_status(session_info, pckt->units[0]);
-
         // Calls callback(action) to init packet
         if (session_info.status == session_info_type::status_enum::is_connected)
             callback(pckt);
         else
             session_info.handshake_context.init_packet(pckt);
 
+        // Updates protocol status of passed session
+        update_protocol_status(session_info, pckt->units[0]);
+
         decltype(auto) payload_cipher_state =
             session_info.handshake_context.get_payload_cipher_state();
         decltype(auto) header_cipher_state =
-            session_info.handshake_context.get_header_cipher_state();
+            session_info.handshake_context.get_header_cipher_state_sender();
 
         // Performs rekey for encryption
         ++session_info.batches_sent_number;
-        if (payload_cipher_state.valid()
+        if (session_info.status == session_info_type::status_enum::is_connected
             && session_info.batches_sent_number % batches_per_rekey_number == 0) {
             payload_cipher_state.rekey_encrypt();
             ++session_info.sender_key_iteration_number;
@@ -229,7 +228,7 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
         decltype(auto) payload_cipher_state =
             session_info.handshake_context.get_payload_cipher_state();
         decltype(auto) header_cipher_state =
-            session_info.handshake_context.get_header_cipher_state();
+            session_info.handshake_context.get_header_cipher_state_receiver();
 
         // Selects possible unit number
         std::size_t count_decrypted_units = 0;
@@ -391,16 +390,16 @@ void essu::protocol_type::update_protocol_status(session_info_type &session_info
         session_info.status = typename session_info_type::status_enum(
             static_cast<std::size_t>(session_info.status) + 1);
 }
-noise::buffer_type<sizeof(typename essu::unit_type::header_data_type)>
-    essu::protocol_type::derive_header_obfs_key(
-        typename noise_context_type::cipher_state &header_cipher_state,
-        std::uint32_t                              number) const {
+noise::buffer_type<essu::header_data_size> essu::protocol_type::derive_header_obfs_key(
+    typename noise_context_type::cipher_state &header_cipher_state,
+    std::uint64_t                              number) const {
     noise::buffer_type<sizeof(typename essu::unit_type::header_data_type)
                        + noise_context_type::mac_size>
         obfs_key_tmp{};
     header_cipher_state.input_buffer.set({obfs_key_tmp.data(), obfs_key_tmp.size()},
                                          obfs_key_tmp.size()
                                              - noise_context_type::mac_size);
+
     header_cipher_state.set_encrypt_nonce(number);
     header_cipher_state.encrypt({});
 
