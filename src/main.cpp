@@ -95,7 +95,7 @@ static void parse_options(xxcore_config &cfg, int argc, char *argv[]) {
 
 // Reads json file
 xxcore_service::buffer_config_type read_config() {
-    xxcore_service::buffer_config_type buffer_tmp;
+    xxcore_service::buffer_config_type buffer_tmp{};
 
     std::ifstream config(name_config_file);
     if (!config.is_open())
@@ -122,7 +122,7 @@ void write_config(xxcore_service::buffer_config_type &buffer) {
 
 void print_cfg(const xxcore_config &cfg) {
     using ca_type = stream_audio::ca_type;
-    using na_type = xxcore_service::noise_context_type;
+    using nc_type = essu::noise_context_type;
 
     log_main.to_console(" -- Sound architecture: {}", dba::arsnd_name);
     log_main.to_console(" -- Sound device: {}", cfg.device);
@@ -138,7 +138,7 @@ void print_cfg(const xxcore_config &cfg) {
     log_main.to_console("    | Max count of connections: {}",
                         network::max_count_addresses);
     log_main.to_console("    | Noise pattern: {}",
-                        std::string_view(na_type::get_name_id()));
+                        std::string_view(nc_type::get_name_id()));
 }
 
 int main(int argc, char *argv[]) {

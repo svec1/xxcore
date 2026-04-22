@@ -10,15 +10,14 @@ namespace essu {
 template<network::Udp_stream TStream>
 class session {
 public:
-    using udp_stream         = TStream;
-    using noise_context_type = essu::session_info_type::noise_context_type;
+    using udp_stream = TStream;
 
 public:
     session(udp_stream &_stream, udp_stream::address_type _remote_addr,
-            noise::noise_role _role, noise_context_type::prologue_extention_type _ext,
-            const noise_context_type::keypair_type        &_local_keypair,
-            const noise_context_type::dh_key_type         &_remote_public_key,
-            const noise_context_type::pre_shared_key_type &_pre_shared_key);
+            noise::noise_role _role, noise::prologue_extention_type _ext,
+            const noise::pre_shared_key_type       &_pre_shared_key,
+            const noise_context_type::keypair_type &_local_keypair,
+            const noise_context_type::dh_key_type  &_remote_public_key);
 
 public:
     // Establishes connection with node(remote_addr): performs noise handshake
@@ -60,18 +59,19 @@ private:
 } // namespace essu
 
 template<network::Udp_stream TStream>
-essu::session<TStream>::session(
-    udp_stream &_stream, udp_stream::address_type _remote_addr, noise::noise_role _role,
-    noise_context_type::prologue_extention_type    _ext,
-    const noise_context_type::keypair_type        &_local_keypair,
-    const noise_context_type::dh_key_type         &_remote_public_key,
-    const noise_context_type::pre_shared_key_type &_pre_shared_key)
+essu::session<TStream>::session(udp_stream                             &_stream,
+                                udp_stream::address_type                _remote_addr,
+                                noise::noise_role                       _role,
+                                noise::prologue_extention_type          _ext,
+                                const noise::pre_shared_key_type       &_pre_shared_key,
+                                const noise_context_type::keypair_type &_local_keypair,
+                                const noise_context_type::dh_key_type &_remote_public_key)
     : stream(_stream), info(stream.get_address_bytes(_remote_addr)),
       buffer_hex_remote_addr(
           noheap::clip_buffer<noheap::buffer_size<decltype(buffer_hex_remote_addr)>, 0>(
               noheap::hex_encode(info.addr))) {
     essu::wrapper_packet_type::get_protocol().register_session_info(
-        info, _role, _ext, _local_keypair, _remote_public_key, _pre_shared_key);
+        info, _role, _ext, _pre_shared_key, _local_keypair, _remote_public_key);
 }
 template<network::Udp_stream TStream>
 void essu::session<TStream>::establish_connection() {

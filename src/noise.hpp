@@ -7,8 +7,23 @@
 
 namespace noise {
 
+constexpr std::size_t handshake_packet_size   = 2048;
+constexpr std::size_t handshake_payload_size  = 32;
+constexpr std::size_t prologue_extention_size = 16;
+constexpr std::size_t pre_shared_key_size     = 32;
+
+template<std::size_t size>
+using buffer_type                   = noheap::buffer_bytes_type<size, noheap::rbyte>;
+using buffer_handshake_packet_type  = buffer_type<handshake_packet_size>;
+using buffer_handshake_payload_type = buffer_type<handshake_payload_size>;
+using prologue_extention_type       = buffer_type<prologue_extention_size>;
+using pre_shared_key_type           = buffer_type<pre_shared_key_size>;
+using buffer_name_id_type           = noheap::buffer_chars_type<NOISE_MAX_PROTOCOL_NAME>;
+
 enum class noise_pattern : std::uint16_t {
     UNKNOWN = 0,
+    XX      = NOISE_PATTERN_XX,
+    XX_HFS  = NOISE_PATTERN_XX_HFS, // with KEM
     XK      = NOISE_PATTERN_XK,
     XK_HFS  = NOISE_PATTERN_XK_HFS, // with KEM
 };
@@ -50,7 +65,11 @@ enum class hash_type : std::uint16_t {
 };
 
 noise_pattern get_noise_pattern(std::string_view pattern_string) {
-    if (pattern_string == "XK")
+    if (pattern_string == "XX")
+        return noise_pattern::XX;
+    else if (pattern_string == "XX_HFS")
+        return noise_pattern::XX_HFS;
+    else if (pattern_string == "XK")
         return noise_pattern::XK;
     else if (pattern_string == "XK_HFS")
         return noise_pattern::XK_HFS;
@@ -66,8 +85,10 @@ noise_role get_noise_role(std::string_view role_string) {
 }
 template<noise_pattern pattern, ecdh_type ecdh>
 consteval std::size_t pattern_ecdh_is_compatible() {
-    if constexpr ((pattern == noise_pattern::XK && ecdh == ecdh_type::X25519)
-                  || (pattern == noise_pattern::XK_HFS
+    if constexpr (((pattern == noise_pattern::XX || pattern == noise_pattern::XK)
+                   && ecdh == ecdh_type::X25519)
+                  || ((pattern == noise_pattern::XX_HFS
+                       || pattern == noise_pattern::XK_HFS)
                       && ecdh == ecdh_type::X25519_KYBER1024))
         return true;
     return false;
@@ -113,9 +134,6 @@ consteval std::size_t get_hash_size() {
         static_assert(false, "The passed hash type is not supported.");
 }
 
-template<std::size_t size>
-using buffer_type = noheap::buffer_bytes_type<size, noheap::rbyte>;
-
 template<noise_pattern _pattern, ecdh_type _ecdh, cipher_type _cipher, hash_type _hash>
 struct noise_context_config {
     static constexpr noise_pattern pattern = _pattern;
@@ -128,12 +146,10 @@ private:
                   "Noise pattern and ecdh type is not compatible.");
 };
 
-template<noise_context_config _config>
+template<noise::noise_context_config _config>
 class noise_context {
 public:
-    static constexpr noise_context_config config = _config;
-
-private:
+    static constexpr noise::noise_context_config config = _config;
     static constexpr bool hybrid_kyber1024 = (config.ecdh == ecdh_type::X25519_KYBER1024);
     static constexpr ecdh_type ecdh =
         hybrid_kyber1024
@@ -150,22 +166,8 @@ private:
     };
 
 public:
-    static constexpr std::size_t max_buffer_name_id_size = 64;
-    static constexpr std::size_t handshake_packet_size   = 2048;
-    static constexpr std::size_t handshake_payload_size  = 32;
-    static constexpr std::size_t prologue_extention_size = 16;
-    static constexpr std::size_t pre_shared_key_size     = 32;
-    static constexpr std::size_t dh_key_size             = get_dh_key_size<ecdh>();
-    static constexpr std::size_t mac_size                = get_mac_size<config.cipher>();
-
-    using buffer_handshake_packet_type =
-        noheap::buffer_bytes_type<handshake_packet_size, noheap::rbyte>;
-    using buffer_handshake_payload_type = buffer_type<handshake_payload_size>;
-    using prologue_extention_type       = buffer_type<prologue_extention_size>;
-    using pre_shared_key_type           = buffer_type<pre_shared_key_size>;
-    using dh_key_type                   = buffer_type<dh_key_size>;
-
-    using name_id = noheap::buffer_type<char, max_buffer_name_id_size>;
+    static constexpr std::size_t mac_size = get_mac_size<config.cipher>();
+    using dh_key_type                     = buffer_type<get_dh_key_size<ecdh>()>;
 
 private:
     struct {
@@ -188,13 +190,11 @@ public:
     static constexpr std::size_t prologue_size = sizeof(prologue);
     using buffer_prologue_type                 = noheap::buffer_bytes_type<prologue_size>;
 
-public:
     struct keypair_type {
         dh_key_type priv;
         dh_key_type pub;
     };
 
-public:
     struct noise_buffer_view {
     public:
         void set(std::span<noheap::rbyte> buffer, std::size_t payload_size) {
@@ -213,7 +213,7 @@ public:
     };
 
     struct cipher_state {
-        friend class noise_context<_config>;
+        friend class noise::noise_context<_config>;
 
     public:
         cipher_state();
@@ -291,9 +291,7 @@ public:
 public:
     void init(noise_role _role);
     void dump();
-
     void fallback();
-    void fallback_to_original();
     void start();
     void stop();
 
@@ -301,14 +299,12 @@ public:
     noise_buffer_view &get_handshake_payload_buffer();
     void               get_cipher_state(cipher_state &_cipher_state);
 
-public:
     noise_action get_action() const;
     noise_role   get_role() const;
 
     void set_handshake_message();
     void get_handshake_message();
 
-public:
     void                    set_prologue(prologue_extention_type ext);
     buffer_prologue_type    get_prologue();
     dh_key_type             get_remote_public_key();
@@ -319,8 +315,8 @@ public:
     void set_pre_shared_key(const pre_shared_key_type &key);
 
 public:
-    static name_id      get_name_id();
-    static keypair_type generate_keypair();
+    static buffer_name_id_type get_name_id();
+    static keypair_type        generate_keypair();
 
 private:
     static void handle_error(std::size_t error, std::string_view extention_error);
@@ -338,10 +334,11 @@ private:
     noise_buffer_view handshake_buffer{};
     noise_buffer_view handshake_payload_buffer{};
 };
+} // namespace noise
 
 // Cipher state
-template<noise_context_config _config>
-noise_context<_config>::cipher_state::cipher_state() {
+template<noise::noise_context_config _config>
+noise::noise_context<_config>::cipher_state::cipher_state() {
     std::size_t ret;
     if ((ret = noise_cipherstate_new_by_id(&encrypt_state,
                                            static_cast<std::uint16_t>(config.cipher)))
@@ -352,8 +349,8 @@ noise_context<_config>::cipher_state::cipher_state() {
 
     decrypt_state = encrypt_state;
 }
-template<noise_context_config _config>
-void noise_context<_config>::cipher_state::init(cipher_state &&other) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::cipher_state::init(cipher_state &&other) {
     dump();
 
     encrypt_state = other.encrypt_state;
@@ -361,8 +358,8 @@ void noise_context<_config>::cipher_state::init(cipher_state &&other) {
 
     other.encrypt_state = other.decrypt_state = nullptr;
 }
-template<noise_context_config _config>
-void noise_context<_config>::cipher_state::dump() {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::cipher_state::dump() {
     if (encrypt_state == nullptr)
         return;
 
@@ -375,14 +372,15 @@ void noise_context<_config>::cipher_state::dump() {
 
     encrypt_state = decrypt_state = nullptr;
 }
-template<noise_context_config _config>
-noise_context<_config>::cipher_state::~cipher_state() {
+template<noise::noise_context_config _config>
+noise::noise_context<_config>::cipher_state::~cipher_state() {
     dump();
 
     noise_randstate_free(randstate);
 }
-template<noise_context_config _config>
-void noise_context<_config>::cipher_state::encrypt(std::span<noheap::rbyte> buffer_ad) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::cipher_state::encrypt(
+    std::span<noheap::rbyte> buffer_ad) {
     check_completed_handshake();
     std::size_t ret;
 
@@ -392,8 +390,9 @@ void noise_context<_config>::cipher_state::encrypt(std::span<noheap::rbyte> buff
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to encrypt.");
 }
-template<noise_context_config _config>
-void noise_context<_config>::cipher_state::decrypt(std::span<noheap::rbyte> buffer_ad) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::cipher_state::decrypt(
+    std::span<noheap::rbyte> buffer_ad) {
     check_completed_handshake();
     std::size_t ret;
     if ((ret = noise_cipherstate_decrypt_with_ad(
@@ -402,8 +401,8 @@ void noise_context<_config>::cipher_state::decrypt(std::span<noheap::rbyte> buff
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to decrypt.");
 }
-template<noise_context_config _config>
-void noise_context<_config>::cipher_state::pad() {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::cipher_state::pad() {
     auto &noise_buffer = input_buffer.get();
 
     std::size_t ret;
@@ -412,36 +411,36 @@ void noise_context<_config>::cipher_state::pad() {
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to pad.");
 }
-template<noise_context_config _config>
-void noise_context<_config>::cipher_state::rekey_encrypt() {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::cipher_state::rekey_encrypt() {
     check_completed_handshake();
     std::size_t ret;
     if ((ret = noise_cipherstate_rekey(encrypt_state)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to rekey for encrypt state.");
 }
-template<noise_context_config _config>
-void noise_context<_config>::cipher_state::rekey_decrypt() {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::cipher_state::rekey_decrypt() {
     check_completed_handshake();
     std::size_t ret;
     if ((ret = noise_cipherstate_rekey(decrypt_state)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to rekey for decrypt state.");
 }
-template<noise_context_config _config>
-void noise_context<_config>::cipher_state::set_encrypt_nonce(std::uint64_t nonce) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::cipher_state::set_encrypt_nonce(std::uint64_t nonce) {
     check_completed_handshake();
     std::size_t ret;
     if ((ret = noise_cipherstate_set_nonce(encrypt_state, nonce)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to set encrypting nonce.");
 }
-template<noise_context_config _config>
-void noise_context<_config>::cipher_state::set_decrypt_nonce(std::uint64_t nonce) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::cipher_state::set_decrypt_nonce(std::uint64_t nonce) {
     check_completed_handshake();
     std::size_t ret;
     if ((ret = noise_cipherstate_set_nonce(decrypt_state, nonce)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to set decrypting nonce.");
 }
-template<noise_context_config _config>
-void noise_context<_config>::cipher_state::set_key(const dh_key_type &key) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::cipher_state::set_key(const dh_key_type &key) {
     std::size_t ret;
     if ((ret = noise_cipherstate_init_key(
              encrypt_state, reinterpret_cast<const noheap::ubyte *>(key.data()),
@@ -449,43 +448,43 @@ void noise_context<_config>::cipher_state::set_key(const dh_key_type &key) {
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to set key.");
 }
-template<noise_context_config _config>
-bool noise_context<_config>::cipher_state::valid() const {
+template<noise::noise_context_config _config>
+bool noise::noise_context<_config>::cipher_state::valid() const {
     return encrypt_state && decrypt_state && noise_cipherstate_has_key(encrypt_state)
            && noise_cipherstate_has_key(decrypt_state);
 }
-template<noise_context_config _config>
-void noise_context<_config>::cipher_state::set_states(NoiseCipherState *_encrypt_state,
-                                                      NoiseCipherState *_decrypt_state) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::cipher_state::set_states(
+    NoiseCipherState *_encrypt_state, NoiseCipherState *_decrypt_state) {
     dump();
 
     encrypt_state = _encrypt_state;
     decrypt_state = _decrypt_state;
 }
-template<noise_context_config _config>
-void noise_context<_config>::cipher_state::check_completed_handshake() {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::cipher_state::check_completed_handshake() {
     if (!valid())
         handle_error(0, "The states is not initialized.");
 }
 
 // Hash state
-template<noise_context_config _config>
-noise_context<_config>::hash_state::hash_state() {
+template<noise::noise_context_config _config>
+noise::noise_context<_config>::hash_state::hash_state() {
     std::size_t ret;
     if ((ret = noise_hashstate_new_by_id(&hashstate,
                                          static_cast<std::uint16_t>(config.hash)))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to init hash state.");
 }
-template<noise_context_config _config>
-noise_context<_config>::hash_state::~hash_state() {
+template<noise::noise_context_config _config>
+noise::noise_context<_config>::hash_state::~hash_state() {
     std::size_t ret;
     if ((ret = noise_hashstate_free(hashstate)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to free hash state.");
 }
-template<noise_context_config _config>
-noise_context<_config>::hash_state::buffer_type
-    noise_context<_config>::hash_state::get_hash(std::span<noheap::rbyte> buffer) {
+template<noise::noise_context_config _config>
+noise::noise_context<_config>::hash_state::buffer_type
+    noise::noise_context<_config>::hash_state::get_hash(std::span<noheap::rbyte> buffer) {
     decltype(get_hash(buffer)) buffer_tmp{};
     std::size_t                ret;
     if ((ret = noise_hashstate_hash_one(
@@ -496,11 +495,10 @@ noise_context<_config>::hash_state::buffer_type
 
     return buffer_tmp;
 }
-template<noise_context_config _config>
-void noise_context<_config>::hash_state::hkdf(std::span<const noheap::rbyte> buffer,
-                                              std::span<const noheap::rbyte> key,
-                                              std::span<noheap::rbyte>       output1,
-                                              std::span<noheap::rbyte>       output2) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::hash_state::hkdf(
+    std::span<const noheap::rbyte> buffer, std::span<const noheap::rbyte> key,
+    std::span<noheap::rbyte> output1, std::span<noheap::rbyte> output2) {
     std::size_t ret;
     if ((ret = noise_hashstate_hkdf(
              hashstate, reinterpret_cast<const noheap::ubyte *>(key.data()), key.size(),
@@ -512,20 +510,20 @@ void noise_context<_config>::hash_state::hkdf(std::span<const noheap::rbyte> buf
 }
 
 // Noise context
-template<noise_context_config _config>
-noise_context<_config>::~noise_context() {
+template<noise::noise_context_config _config>
+noise::noise_context<_config>::~noise_context() {
     this->dump();
 }
-template<noise_context_config _config>
-void noise_context<_config>::init(noise_role role) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::init(noise_role role) {
     std::size_t ret;
     if ((ret = noise_handshakestate_new_by_id(&handshakestate, &nid_static,
                                               static_cast<std::uint16_t>(role)))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to get new state of handshake.");
 }
-template<noise_context_config _config>
-void noise_context<_config>::dump() {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::dump() {
     if (!handshakestate)
         return;
 
@@ -534,27 +532,20 @@ void noise_context<_config>::dump() {
     handshake_buffer = {};
     handshakestate   = nullptr;
 }
-template<noise_context_config _config>
-void noise_context<_config>::fallback() {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::fallback() {
     std::size_t ret;
     if ((ret = noise_handshakestate_fallback(handshakestate)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to fallback.");
 }
-template<noise_context_config _config>
-void noise_context<_config>::fallback_to_original() {
-    std::size_t ret;
-    if ((ret = noise_handshakestate_fallback_to(handshakestate, nid_static.pattern_id))
-        != NOISE_ERROR_NONE)
-        handle_error(ret, "Failed to fallback to original.");
-}
-template<noise_context_config _config>
-void noise_context<_config>::start() {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::start() {
     std::size_t ret;
     if ((ret = noise_handshakestate_start(handshakestate)) != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to start handshake.");
 }
-template<noise_context_config _config>
-void noise_context<_config>::stop() {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::stop() {
     if (this->get_action() != noise_action::SPLIT)
         handle_error(0, "Failed to complete handshake.");
 
@@ -564,32 +555,32 @@ void noise_context<_config>::stop() {
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to split handshake.");
 }
-template<noise_context_config _config>
-noise_context<_config>::noise_buffer_view &
-    noise_context<_config>::get_handshake_buffer() {
+template<noise::noise_context_config _config>
+noise::noise_context<_config>::noise_buffer_view &
+    noise::noise_context<_config>::get_handshake_buffer() {
     return handshake_buffer;
 }
-template<noise_context_config _config>
-noise_context<_config>::noise_buffer_view &
-    noise_context<_config>::get_handshake_payload_buffer() {
+template<noise::noise_context_config _config>
+noise::noise_context<_config>::noise_buffer_view &
+    noise::noise_context<_config>::get_handshake_payload_buffer() {
     return handshake_payload_buffer;
 }
-template<noise_context_config _config>
-void noise_context<_config>::get_cipher_state(cipher_state &_cipher_st) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::get_cipher_state(cipher_state &_cipher_st) {
     _cipher_st.init(std::move(cipher_st));
 }
 
-template<noise_context_config _config>
-noise_action noise_context<_config>::get_action() const {
+template<noise::noise_context_config _config>
+noise::noise_action noise::noise_context<_config>::get_action() const {
     return noise_action(noise_handshakestate_get_action(handshakestate));
 }
-template<noise_context_config _config>
-noise_role noise_context<_config>::get_role() const {
+template<noise::noise_context_config _config>
+noise::noise_role noise::noise_context<_config>::get_role() const {
     return noise_role(noise_handshakestate_get_role(handshakestate));
 }
 
-template<noise_context_config _config>
-void noise_context<_config>::set_handshake_message() {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::set_handshake_message() {
     if (handshake_payload_buffer.get().size > handshake_payload_size)
         handle_error(0, "Invalid size of handshake payload.");
 
@@ -601,8 +592,8 @@ void noise_context<_config>::set_handshake_message() {
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to set handshake message.");
 }
-template<noise_context_config _config>
-void noise_context<_config>::get_handshake_message() {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::get_handshake_message() {
     if (handshake_payload_buffer.get().size > handshake_payload_size)
         handle_error(0, "Invalid size of handshake payload.");
 
@@ -615,8 +606,8 @@ void noise_context<_config>::get_handshake_message() {
         handle_error(ret, "Failed to get handshake message.");
 }
 
-template<noise_context_config _config>
-void noise_context<_config>::set_prologue(prologue_extention_type ext) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::set_prologue(prologue_extention_type ext) {
     prologue.ext = std::move(ext);
 
     std::size_t ret;
@@ -625,14 +616,16 @@ void noise_context<_config>::set_prologue(prologue_extention_type ext) {
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to set prologue.");
 }
-template<noise_context_config _config>
-noise_context<_config>::buffer_prologue_type noise_context<_config>::get_prologue() {
+template<noise::noise_context_config _config>
+noise::noise_context<_config>::buffer_prologue_type
+    noise::noise_context<_config>::get_prologue() {
     buffer_prologue_type buffer_tmp{};
     std::copy(buffer_tmp.begin(), buffer_tmp.end(), reinterpret_cast<char *>(&prologue));
     return buffer_tmp;
 }
-template<noise_context_config _config>
-noise_context<_config>::dh_key_type noise_context<_config>::get_remote_public_key() {
+template<noise::noise_context_config _config>
+noise::noise_context<_config>::dh_key_type
+    noise::noise_context<_config>::get_remote_public_key() {
     dh_key_type   buffer_tmp{};
     NoiseDHState *dh = noise_handshakestate_get_remote_public_key_dh(handshakestate);
 
@@ -644,9 +637,9 @@ noise_context<_config>::dh_key_type noise_context<_config>::get_remote_public_ke
 
     return buffer_tmp;
 }
-template<noise_context_config _config>
-noise_context<_config>::hash_state::buffer_type
-    noise_context<_config>::get_handshake_hash() {
+template<noise::noise_context_config _config>
+noise::noise_context<_config>::hash_state::buffer_type
+    noise::noise_context<_config>::get_handshake_hash() {
     decltype(get_handshake_hash()) buffer_hash{};
 
     std::size_t ret;
@@ -658,8 +651,8 @@ noise_context<_config>::hash_state::buffer_type
 
     return buffer_hash;
 }
-template<noise_context_config _config>
-void noise_context<_config>::set_pre_shared_key(const pre_shared_key_type &key) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::set_pre_shared_key(const pre_shared_key_type &key) {
     if (!noise_handshakestate_needs_pre_shared_key(handshakestate))
         return;
 
@@ -670,8 +663,8 @@ void noise_context<_config>::set_pre_shared_key(const pre_shared_key_type &key) 
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to set pre shared key.");
 }
-template<noise_context_config _config>
-void noise_context<_config>::set_remote_public_key(const dh_key_type &key) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::set_remote_public_key(const dh_key_type &key) {
     if (!noise_handshakestate_needs_remote_public_key(handshakestate))
         return;
 
@@ -683,8 +676,8 @@ void noise_context<_config>::set_remote_public_key(const dh_key_type &key) {
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to set remote public key.");
 }
-template<noise_context_config _config>
-void noise_context<_config>::set_local_keypair(const keypair_type &kp) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::set_local_keypair(const keypair_type &kp) {
     if (!noise_handshakestate_needs_local_keypair(handshakestate))
         return;
 
@@ -703,22 +696,20 @@ void noise_context<_config>::set_local_keypair(const keypair_type &kp) {
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to get local public keypair.");
 
-    if (!noheap::is_equal_bytes(
-            {reinterpret_cast<const noheap::ubyte *>(derived_public_key.data()),
-             derived_public_key.size()},
-            {reinterpret_cast<const noheap::ubyte *>(kp.pub.data()), kp.pub.size()}))
+    if (derived_public_key != kp.pub)
         handle_error(ret, "The passed local public key is invalid.");
 }
-template<noise_context_config _config>
-noise_context<_config>::name_id noise_context<_config>::get_name_id() {
-    name_id buffer_tmp{};
+template<noise::noise_context_config _config>
+noise::buffer_name_id_type noise::noise_context<_config>::get_name_id() {
+    buffer_name_id_type buffer_tmp{};
     noise_protocol_id_to_name(buffer_tmp.data(), buffer_tmp.size(), &nid_static);
     return buffer_tmp;
 }
-template<noise_context_config _config>
-noise_context<_config>::keypair_type noise_context<_config>::generate_keypair() {
-    keypair_type           kp;
-    noise_context<_config> context_tmp;
+template<noise::noise_context_config _config>
+noise::noise_context<_config>::keypair_type
+    noise::noise_context<_config>::generate_keypair() {
+    keypair_type                  kp;
+    noise::noise_context<_config> context_tmp;
 
     context_tmp.init(noise_role::INITIATOR);
     NoiseDHState *dh =
@@ -735,9 +726,9 @@ noise_context<_config>::keypair_type noise_context<_config>::generate_keypair() 
 
     return kp;
 }
-template<noise_context_config _config>
-void noise_context<_config>::handle_error(std::size_t      error,
-                                          std::string_view extention_error) {
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::handle_error(std::size_t      error,
+                                                 std::string_view extention_error) {
     if (error) {
         noheap::buffer_type<char, 64> buffer_noise_error{};
         noise_strerror(error, buffer_noise_error.data(), buffer_noise_error.size());
@@ -746,6 +737,5 @@ void noise_context<_config>::handle_error(std::size_t      error,
     } else
         throw noheap::runtime_error(buffer_owner, "{}", extention_error);
 }
-} // namespace noise
 
 #endif

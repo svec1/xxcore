@@ -334,7 +334,7 @@ private:
     void try_lock();
     void unlock();
 
-    static void handle_error(const std::error_code &ec);
+    static void handle_error(const system::error_code &ec);
 
 private:
     static constexpr noheap::log_impl::owner_impl::buffer_type buffer_owner =
@@ -417,10 +417,7 @@ udp_stream<Action, v>::async_validation_type
 
                 return ec.value();
             }),
-        [](std::size_t ec) {
-            handle_error({static_cast<int>(ec), system::system_category()});
-        },
-        [this]() { this->socket.cancel(); },
+        {}, [this]() { this->socket.cancel(); },
         async_validation_type::status_enum::in_progress);
 }
 
@@ -508,10 +505,7 @@ udp_stream<Action, v>::async_validation_type
     return async_validation_type(
         socket.async_receive_from(asio::mutable_buffer{pckt.data(), pckt.size()},
                                   sender_endpoint_tmp, 0, asio::use_future),
-        [func = std::bind(handle_receive, std::ref(pckt))](std::size_t ec) {
-            handle_error({static_cast<int>(ec), system::system_category()});
-            func();
-        },
+        [func = std::bind(handle_receive, std::ref(pckt))](std::size_t) { func(); },
         [this]() { this->socket.cancel(); },
         async_validation_type::status_enum::in_progress);
 }
@@ -519,7 +513,7 @@ udp_stream<Action, v>::async_validation_type
 template<Derived_from_action Action, ipv v>
 void udp_stream<Action, v>::try_lock() {
     if (!lock_m.try_lock_for(std::chrono::milliseconds(timeout_ms)))
-        handle_error(std::error_code(asio::error::timed_out, system::system_category()));
+        handle_error(system::error_code(asio::error::timed_out));
 }
 template<Derived_from_action Action, ipv v>
 void udp_stream<Action, v>::unlock() {
@@ -545,7 +539,7 @@ udp_stream<Action, v>::address_type
 }
 
 template<Derived_from_action Action, ipv v>
-void udp_stream<Action, v>::handle_error(const std::error_code &ec) {
+void udp_stream<Action, v>::handle_error(const system::error_code &ec) {
     if (!ec.value())
         return;
 

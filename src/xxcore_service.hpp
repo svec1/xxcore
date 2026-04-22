@@ -46,21 +46,20 @@ public:
     static constexpr std::size_t max_size_config = BOOST_JSON_STACK_BUFFER_SIZE;
     using buffer_config_type = noheap::buffer_type<char, max_size_config>;
 
-    using udp_stream         = network::udp_stream<test_action, network::ipv::v4>;
-    using address_type       = udp_stream::address_type;
-    using port_type          = udp_stream::port_type;
-    using session_type       = essu::session<udp_stream>;
-    using noise_context_type = session_type::noise_context_type;
+    using udp_stream   = network::udp_stream<test_action, network::ipv::v4>;
+    using address_type = udp_stream::address_type;
+    using port_type    = udp_stream::port_type;
+    using session_type = essu::session<udp_stream>;
 
 private:
     // Config for noise handshake.
     struct config_type {
         noise::noise_role role;
 
-        noise_context_type::dh_key_type local_private_key;
-        noise_context_type::dh_key_type local_public_key;
-        noise_context_type::dh_key_type remote_public_key;
-        noise_context_type::dh_key_type pre_shared_key;
+        essu::noise_context_type::dh_key_type local_private_key;
+        essu::noise_context_type::dh_key_type local_public_key;
+        essu::noise_context_type::dh_key_type remote_public_key;
+        essu::noise_context_type::dh_key_type pre_shared_key;
     };
 
 public:
@@ -90,10 +89,9 @@ void xxcore_service::run() {
     asio::executor_work_guard<decltype(stream.get_executor())> work_guard(
         stream.get_executor());
 
-    session_type session_test(stream, addr, config.role, {},
+    session_type session_test(stream, addr, config.role, {}, config.pre_shared_key,
                               {config.local_private_key, config.local_public_key},
-                              std::move(config.remote_public_key),
-                              std::move(config.pre_shared_key));
+                              config.remote_public_key);
 
     try {
         session_test.establish_connection();
@@ -119,10 +117,9 @@ void xxcore_service::configurate(buffer_config_type &buffer, bool generate_new_k
 
         json::static_resource json_mr(json_buffer_tmp.data(), json_buffer_tmp.size());
 
-        json::value data(&json_mr);
-        data = json::parse(buffer.data(), &json_mr);
+        json::value data = json::parse(buffer.data(), &json_mr);
 
-        auto keypair_tmp = noise_context_type::generate_keypair();
+        auto keypair_tmp = essu::noise_context_type::generate_keypair();
 
         const auto &get_bytes_key = [&](const std::string_view field_name,
                                         auto                  &buffer_key) {

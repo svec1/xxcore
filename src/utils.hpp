@@ -148,17 +148,6 @@ buffer_bytes_type<count_bytes, ubyte> get_random_bytes() {
     return buffer_tmp;
 }
 
-bool is_equal_bytes(std::span<const ubyte> b1, std::span<const ubyte> b2) {
-    if (b1.size() != b2.size())
-        return false;
-
-    std::size_t mismatch = 0;
-    for (std::size_t i = 0; i < b1.size(); ++i)
-        mismatch |= static_cast<unsigned char>(b1[i] ^ b2[i]);
-
-    return !mismatch;
-}
-
 class print_impl final {
 public:
     static constexpr std::size_t buffer_size = output_buffer_size;
