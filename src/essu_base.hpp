@@ -7,7 +7,7 @@
 
 namespace essu {
 
-constexpr std::size_t unit_size                      = 340;
+constexpr std::size_t packet_size                    = 1376;
 constexpr std::size_t header_data_size               = 16;
 constexpr std::size_t min_random_bytes_number        = 64;
 constexpr std::size_t batch_units_number             = 4;
@@ -15,6 +15,7 @@ constexpr std::size_t batches_per_rekey_number       = 32;
 constexpr std::size_t batches_window_number          = 16;
 constexpr std::size_t max_undecrypted_batches_number = 16;
 constexpr std::size_t max_available_batches_number   = 128'000;
+constexpr std::size_t unit_size                      = packet_size / batch_units_number;
 constexpr std::size_t buffer_data_size               = unit_size - header_data_size;
 constexpr std::size_t payload_data_size = buffer_data_size - min_random_bytes_number;
 
@@ -29,12 +30,11 @@ struct unit_config_type {
         noise::get_dh_key_size<noise_config.ecdh>() + noise_context_type::mac_size
         + noise::get_kem_key_size<noise_config.ecdh>();
     static constexpr std::size_t hs2_size =
-        noise::get_dh_key_size<noise_config.ecdh>() * 2
-        + noise::get_kem_cipher_text_size<noise_config.ecdh>()
-        + noise_context_type::mac_size * 2;
+        noise::get_dh_key_size<noise_config.ecdh>() * 2 + noise_context_type::mac_size * 2
+        + noise::get_kem_cipher_text_size<noise_config.ecdh>();
     static constexpr std::size_t hs3_size = noise::get_dh_key_size<noise_config.ecdh>()
-                                            + noise::handshake_payload_size
-                                            + noise_context_type::mac_size * 2;
+                                            + noise_context_type::mac_size * 2
+                                            + noise::handshake_payload_size;
 };
 
 using noise_context_type = unit_config_type::noise_context_type;

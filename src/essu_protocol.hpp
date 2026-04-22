@@ -80,7 +80,8 @@ private:
          find_session_info(network::buffer_address_type addr) const;
     void check_protocol_status(session_info_type &session_info,
                                const unit_type   &unit) const;
-    void update_protocol_status(session_info_type &session_info) const;
+    void update_protocol_status(session_info_type &session_info,
+                                const unit_type   &unit) const;
     noise::buffer_type<header_data_size> derive_header_obfs_key(
         typename noise_context_type::cipher_state &header_cipher_state,
         std::uint64_t                              number) const;
@@ -208,7 +209,7 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
             session_info.reset_numbers();
             payload_cipher_state.dump();
         }
-        update_protocol_status(session_info);
+        update_protocol_status(session_info, pckt->units[0]);
 
     } catch (noheap::runtime_error &excp) {
         excp.set_owner(this->buffer_owner);
@@ -311,7 +312,7 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
         else
             session_info.handshake_context.process_packet(std::move(pckt));
 
-        update_protocol_status(session_info);
+        update_protocol_status(session_info, pckt->units[0]);
     } catch (noheap::runtime_error &excp) {
         excp.set_owner(this->buffer_owner);
         throw;
@@ -388,8 +389,10 @@ void essu::protocol_type::check_protocol_status(session_info_type &session_info,
              && unit.header.type != unit_type::unit_type_enum::data)
         throw noheap::runtime_error("Expected unit to contain payload data.");
 }
-void essu::protocol_type::update_protocol_status(session_info_type &session_info) const {
-    if (session_info.status != session_info_type::status_enum::is_connected)
+void essu::protocol_type::update_protocol_status(session_info_type &session_info,
+                                                 const unit_type   &unit) const {
+    if (session_info.status != session_info_type::status_enum::is_connected
+        && unit.header.flag != unit_type::flag_type_enum::wait_next)
         session_info.status = typename session_info_type::status_enum(
             static_cast<std::size_t>(session_info.status) + 1);
 }

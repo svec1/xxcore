@@ -104,14 +104,14 @@ void essu::session<TStream>::run_stream_session() {
 
     running.store(true);
 
-    try {
-        while (true) {
+    while (true) {
+        try {
             future_wrapper future_object_to_send([&]() {
                 try {
                     essu::wrapper_packet_type pckt{};
 
                     while (running.load()
-                           && pckt.get_protocol().needs_to_rehandshake(info))
+                           && !pckt.get_protocol().needs_to_rehandshake(info))
                         node_send(stream, pckt, info);
                 } catch (...) {
                     running.store(false);
@@ -123,7 +123,7 @@ void essu::session<TStream>::run_stream_session() {
                     essu::wrapper_packet_type pckt{};
 
                     while (running.load()
-                           && pckt.get_protocol().needs_to_rehandshake(info))
+                           && !pckt.get_protocol().needs_to_rehandshake(info))
                         node_receive(stream, pckt, info);
                 } catch (...) {
                     running.store(false);
@@ -134,10 +134,11 @@ void essu::session<TStream>::run_stream_session() {
             future_object_to_send.get();
             future_object_to_receive.get();
 
-            establish_connection();
+        } catch (noheap::runtime_error &excp) {
+            this->throw_error("Connection terminated. {}", excp.what());
         }
-    } catch (noheap::runtime_error &excp) {
-        this->throw_error("Connection terminated. {}", excp.what());
+
+        establish_connection();
     }
 }
 

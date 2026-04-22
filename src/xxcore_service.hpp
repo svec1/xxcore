@@ -95,6 +95,8 @@ void xxcore_service::run() {
 
     try {
         session_test.establish_connection();
+        log.to_all("Connection established.");
+
         session_test.run_stream_session();
     } catch (...) {
         work_guard.reset();

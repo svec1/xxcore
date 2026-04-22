@@ -266,7 +266,7 @@ void essu::noise_handshake_context::check_noise_action(noise::noise_action expec
 
     if (action == noise::noise_action::FAILED)
         throw noheap::runtime_error("Failed to handshake.");
-    else if (number_handshake_parts > 2)
+    else if (number_handshake_parts > 3)
         throw noheap::runtime_error("Unexpected behaviour during the noise handshake.");
 
     if (action == expected)
