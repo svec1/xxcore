@@ -31,7 +31,7 @@ struct unit_config_type {
     static constexpr std::size_t hs2_size =
         noise::get_dh_key_size<noise_config.ecdh>() * 2
         + noise::get_kem_cipher_text_size<noise_config.ecdh>()
-        + noise_context_type::mac_size;
+        + noise_context_type::mac_size * 2;
     static constexpr std::size_t hs3_size = noise::get_dh_key_size<noise_config.ecdh>()
                                             + noise::handshake_payload_size
                                             + noise_context_type::mac_size * 2;

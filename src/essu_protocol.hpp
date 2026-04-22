@@ -78,8 +78,9 @@ public:
 private:
     session_info_s_type::iterator
          find_session_info(network::buffer_address_type addr) const;
-    void update_protocol_status(session_info_type &session_info,
-                                const unit_type   &unit) const;
+    void check_protocol_status(session_info_type &session_info,
+                               const unit_type   &unit) const;
+    void update_protocol_status(session_info_type &session_info) const;
     noise::buffer_type<header_data_size> derive_header_obfs_key(
         typename noise_context_type::cipher_state &header_cipher_state,
         std::uint64_t                              number) const;
@@ -107,7 +108,7 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
             session_info.handshake_context.init_packet(pckt);
 
         // Updates protocol status of passed session
-        update_protocol_status(session_info, pckt->units[0]);
+        check_protocol_status(session_info, pckt->units[0]);
 
         decltype(auto) payload_cipher_state =
             session_info.handshake_context.get_payload_cipher_state();
@@ -144,16 +145,13 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
                 else {
                     switch (unit.header.type) {
                         case unit_type::unit_type_enum::session_request:
-                            payload_size = unit_config_type::hs1_size
-                                           - (unit.buffer.size() * unit.header.number);
+                            payload_size = unit_config_type::hs1_size;
                             break;
                         case unit_type::unit_type_enum::session_created:
-                            payload_size = unit_config_type::hs2_size
-                                           - (unit.buffer.size() * unit.header.number);
+                            payload_size = unit_config_type::hs2_size;
                             break;
                         case unit_type::unit_type_enum::session_confirmed:
-                            payload_size = unit_config_type::hs3_size
-                                           - (unit.buffer.size() * unit.header.number);
+                            payload_size = unit_config_type::hs3_size;
                             break;
                         case unit_type::unit_type_enum::data:
                             payload_size = payload_data_size;
@@ -210,6 +208,7 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
             session_info.reset_numbers();
             payload_cipher_state.dump();
         }
+        update_protocol_status(session_info);
 
     } catch (noheap::runtime_error &excp) {
         excp.set_owner(this->buffer_owner);
@@ -305,12 +304,14 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
         session_info.receiver_units_number =
             pckt->units[pckt->units.size() - 1].header.number + 1;
 
-        update_protocol_status(session_info, pckt->units[0]);
+        check_protocol_status(session_info, pckt->units[0]);
 
         if (session_info.status == session_info_type::status_enum::is_connected)
             callback(std::move(pckt));
         else
             session_info.handshake_context.process_packet(std::move(pckt));
+
+        update_protocol_status(session_info);
     } catch (noheap::runtime_error &excp) {
         excp.set_owner(this->buffer_owner);
         throw;
@@ -372,8 +373,8 @@ essu::protocol_type::session_info_s_type::iterator
     return std::find_if(session_info_s.begin(), session_info_s.end(),
                         [&](auto el) { return el->addr == addr; });
 }
-void essu::protocol_type::update_protocol_status(session_info_type &session_info,
-                                                 const unit_type   &unit) const {
+void essu::protocol_type::check_protocol_status(session_info_type &session_info,
+                                                const unit_type   &unit) const {
     if (session_info.status == session_info_type::status_enum::hs1
         && unit.header.type != unit_type::unit_type_enum::session_request)
         throw noheap::runtime_error("Expected session request unit.");
@@ -386,7 +387,9 @@ void essu::protocol_type::update_protocol_status(session_info_type &session_info
     else if (session_info.status == session_info_type::status_enum::is_connected
              && unit.header.type != unit_type::unit_type_enum::data)
         throw noheap::runtime_error("Expected unit to contain payload data.");
-    else
+}
+void essu::protocol_type::update_protocol_status(session_info_type &session_info) const {
+    if (session_info.status != session_info_type::status_enum::is_connected)
         session_info.status = typename session_info_type::status_enum(
             static_cast<std::size_t>(session_info.status) + 1);
 }

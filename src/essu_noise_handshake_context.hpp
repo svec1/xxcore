@@ -154,21 +154,21 @@ void essu::noise_handshake_context::process_packet(packet_type &&pckt) {
         throw noheap::runtime_error("Noise handshake dropped.");
 
     // Determines size of payload data
-    std::size_t payload_data_size;
+    std::size_t payload_size;
     if (number_handshake_parts == 0)
-        payload_data_size = unit_config_type::hs1_size;
+        payload_size = unit_config_type::hs1_size;
     else if (number_handshake_parts == 1)
-        payload_data_size = unit_config_type::hs2_size;
+        payload_size = unit_config_type::hs2_size;
     else if (number_handshake_parts == 2)
-        payload_data_size = unit_config_type::hs3_size;
+        payload_size = unit_config_type::hs3_size;
 
     // Copies accepted unit to buffer of noise handshake message
     std::copy(payload_unit.buffer.begin(), payload_unit.buffer.end(),
               buffer_handshake_message.begin() + offset_noise_handshake_unit);
-    offset_noise_handshake_unit += payload_data_size;
+    offset_noise_handshake_unit += payload_size;
 
     // If fragmentation
-    if (payload_data_size >= payload_unit.buffer.size()
+    if (payload_size >= payload_unit.buffer.size()
         && payload_unit.header.flag == decltype(payload_unit.header.flag)::wait_next)
         return;
 
@@ -185,8 +185,7 @@ void essu::noise_handshake_context::process_packet(packet_type &&pckt) {
 
     // Sets noise message
     noise_ctx.get_handshake_buffer().set(
-        {buffer_handshake_message.data(), offset_noise_handshake_unit},
-        payload_data_size);
+        {buffer_handshake_message.data(), offset_noise_handshake_unit}, payload_size);
     noise_ctx.get_handshake_message();
 
     buffer_handshake_message    = {};
