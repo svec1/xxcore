@@ -85,6 +85,10 @@ void essu::noise_handshake_context::init_packet(packet_type &pckt) {
 
     auto &payload_unit = pckt->units[0];
 
+    // Handshake does not need to send 2 units
+    pckt->units[1].header.type = unit_type::unit_type_enum::data;
+    pckt->units[1].header.flag = unit_type::flag_type_enum::drop;
+
     // Gets noise message
     if (!fragmentation) {
         // Generates random value

@@ -128,7 +128,9 @@ consteval std::size_t get_mac_size() {
 
 template<hash_type hash>
 consteval std::size_t get_hash_size() {
-    if constexpr (hash == hash_type::SHA512 || hash == hash_type::SHA3512)
+    if constexpr (hash == hash_type::SHA256 || hash == hash_type::SHA3256)
+        return 32;
+    else if constexpr (hash == hash_type::SHA512 || hash == hash_type::SHA3512)
         return 64;
     else
         static_assert(false, "The passed hash type is not supported.");

@@ -242,7 +242,7 @@ public:
     struct async_validation_type {
         friend udp_stream;
 
-        using callback_type        = std::function<void(std::size_t)>;
+        using callback_type        = std::function<void()>;
         using cancel_callback_type = std::function<void()>;
 
         enum status_enum : std::size_t {
@@ -272,7 +272,8 @@ public:
                 cancel_callback();
 
             status = status_enum::completed;
-            callback(async_operation.get());
+            async_operation.get();
+            callback();
         }
 
     private:
@@ -505,8 +506,7 @@ udp_stream<Action, v>::async_validation_type
     return async_validation_type(
         socket.async_receive_from(asio::mutable_buffer{pckt.data(), pckt.size()},
                                   sender_endpoint_tmp, 0, asio::use_future),
-        [func = std::bind(handle_receive, std::ref(pckt))](std::size_t) { func(); },
-        [this]() { this->socket.cancel(); },
+        std::bind(handle_receive, std::ref(pckt)), [this]() { this->socket.cancel(); },
         async_validation_type::status_enum::in_progress);
 }
 

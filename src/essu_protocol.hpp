@@ -130,43 +130,56 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
             unit.header.key_iteration_number = session_info.sender_key_iteration_number;
 
             // Forces units to be dummy if necessary
-            if (i >= 2)
+            if (i >= 2) {
+                unit.header.type = unit_type::unit_type_enum::data;
                 unit.header.flag = unit_type::flag_type_enum::drop;
+            }
 
             // Adds random padding
             {
                 // Determines payload size of the unit to define size of random
                 // padding
-                std::size_t payload_data_size = unit.buffer_size_without_mac;
-                if (unit.header.type == unit_type::unit_type_enum::session_request)
-                    payload_data_size = unit_config_type::hs1_size
-                                        - (unit.buffer.size() * unit.header.number);
-                else if (unit.header.type == unit_type::unit_type_enum::session_created)
-                    payload_data_size = unit_config_type::hs2_size
-                                        - (unit.buffer.size() * unit.header.number);
-                else if (unit.header.type == unit_type::unit_type_enum::session_confirmed)
-                    payload_data_size = unit_config_type::hs3_size
-                                        - (unit.buffer.size() * unit.header.number);
-                else if (unit.header.type == unit_type::unit_type_enum::data
-                         && unit.header.flag != unit_type::flag_type_enum::drop)
-                    payload_data_size = payload_data_size;
-                else if (unit.header.type == unit_type::unit_type_enum::hole_punch)
-                    payload_data_size = 8;
-                else
-                    payload_data_size = 0;
+                std::size_t payload_size;
+                if (unit.header.flag == unit_type::flag_type_enum::drop)
+                    payload_size = 0;
+                else {
+                    switch (unit.header.type) {
+                        case unit_type::unit_type_enum::session_request:
+                            payload_size = unit_config_type::hs1_size
+                                           - (unit.buffer.size() * unit.header.number);
+                            break;
+                        case unit_type::unit_type_enum::session_created:
+                            payload_size = unit_config_type::hs2_size
+                                           - (unit.buffer.size() * unit.header.number);
+                            break;
+                        case unit_type::unit_type_enum::session_confirmed:
+                            payload_size = unit_config_type::hs3_size
+                                           - (unit.buffer.size() * unit.header.number);
+                            break;
+                        case unit_type::unit_type_enum::data:
+                            payload_size = payload_data_size;
+                            break;
+                        case unit_type::unit_type_enum::hole_punch:
+                            payload_size = 8;
+                            break;
+                        default:
+                            throw noheap::runtime_error(
+                                buffer_owner, "Packet type[{}] is not allowed.",
+                                static_cast<std::size_t>(unit.header.type));
+                    }
+                }
 
                 // Adds random padding after payload data
                 payload_cipher_state.input_buffer.set(
                     {reinterpret_cast<noheap::rbyte *>(unit.buffer.data()),
                      unit.buffer.size()},
-                    std::clamp<std::size_t>(payload_data_size, 0, unit.buffer.size()));
+                    std::clamp<std::size_t>(payload_size, 0, unit.buffer.size()));
                 payload_cipher_state.pad();
             }
 
             // Encrypts buffer data and authenticates based on the header
-            if (unit.header.type == unit_type::unit_type_enum::data
-                && !(unit.header.flag == unit_type::flag_type_enum::drop
-                     && !payload_cipher_state.valid())) {
+            if (session_info.status == session_info_type::status_enum::is_connected
+                && unit.header.type == unit_type::unit_type_enum::data) {
                 payload_cipher_state.input_buffer.set(
                     {unit.buffer.data(), unit.buffer.size()},
                     unit.buffer_size_without_mac);
@@ -248,9 +261,8 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
                     payload_cipher_state.rekey_decrypt();
 
                 // Tries to decrypt buffer data
-                if (test_unit.header.type == unit_type::unit_type_enum::data
-                    && !(unit.header.flag == unit_type::flag_type_enum::drop
-                         && !payload_cipher_state.valid())) {
+                if (session_info.status == session_info_type::status_enum::is_connected
+                    && test_unit.header.type == unit_type::unit_type_enum::data) {
                     payload_cipher_state.output_buffer.set(
                         {test_unit.buffer.data(), test_unit.buffer.size()},
                         test_unit.buffer.size());
