@@ -240,6 +240,7 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
             // Generates header obfuscation key based on the possible_unit_number
             auto obfs_key_tmp =
                 derive_header_obfs_key(header_cipher_state, possible_unit_number);
+
             for (auto &unit : pckt->units) {
                 unit_type test_unit = unit;
 
@@ -288,7 +289,9 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
         // If it was not possible to decrypt all units in batch
         if (count_decrypted_units != pckt->units.size()) {
             ++session_info.undecrypted_batch_number;
-            if (session_info.undecrypted_batch_number == max_undecrypted_batches_number)
+            if (session_info.status != session_info_type::status_enum::is_connected
+                || session_info.undecrypted_batch_number
+                       == max_undecrypted_batches_number)
                 throw noheap::runtime_error("Failed to decrypt last batches.");
             return;
         } else

@@ -170,7 +170,6 @@ void xxcore_service::configurate(buffer_config_type &buffer, bool generate_new_k
         get_bytes_key(pre_shared_string, config.pre_shared_key);
 
         buffer = {};
-
         json::serializer sz;
         sz.reset(&data);
         sz.read(buffer.data(), buffer.size());

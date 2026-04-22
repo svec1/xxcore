@@ -84,11 +84,11 @@ void essu::session<TStream>::establish_connection() {
         protocol.start_handshake(info);
         while (true) {
             auto action = protocol.get_handshake_action(info);
-            if (action == noise::noise_action::WRITE_MESSAGE) {
+            if (action == noise::noise_action::WRITE_MESSAGE)
                 node_send(stream, pckt, info);
-            } else if (action == noise::noise_action::READ_MESSAGE) {
+            else if (action == noise::noise_action::READ_MESSAGE)
                 node_receive(stream, pckt, info);
-            } else
+            else
                 break;
         }
 

@@ -68,7 +68,7 @@ essu::noise_handshake_context::noise_handshake_context(
     const noise_context_type::keypair_type &_local_keypair,
     const noise_context_type::dh_key_type  &_remote_public_key)
     : role(_role), ext(_ext), pre_shared_key(_pre_shared_key),
-      local_keypair(_local_keypair) {
+      local_keypair(_local_keypair), remote_public_key(_remote_public_key) {
 }
 essu::noise_handshake_context &
     essu::noise_handshake_context::operator=(noise_handshake_context &&other) {
@@ -284,6 +284,7 @@ void essu::noise_handshake_context::generate_pair_ephemeral_obfs_key() {
     };
 
     // Derives shared key using own and remote public keys
+    xor_public_key_with_addr(pre_shared_key);
     xor_public_key_with_addr(local_keypair.pub);
     xor_public_key_with_addr(remote_public_key);
 
