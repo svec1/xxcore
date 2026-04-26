@@ -123,6 +123,9 @@ void essu::session<TStream>::run_stream_session() {
         } catch (noheap::runtime_error &excp) {
             this->throw_error("Connection terminated. {}", excp.what());
         }
+        // Sends a retry packet to signal the responder to rehandshake
+        if (protocol.get_role(info) == noise::noise_role::INITIATOR)
+            send(info);
         noheap::println("Rehandshake in progress...{}", running.load());
         establish_connection();
     }

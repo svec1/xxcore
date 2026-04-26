@@ -48,6 +48,7 @@ private:
     std::size_t sender_key_iteration_number;
     std::size_t receiver_key_iteration_number;
     std::size_t undecrypted_batch_number;
+    std::size_t handshake_number;
 };
 
 struct protocol_type
@@ -73,15 +74,16 @@ public:
     void stop_handshake(session_info_type &session_info) const;
 
     bool                needs_to_rehandshake(const session_info_type &session_info) const;
+    noise::noise_role   get_role(const session_info_type &session_info) const;
     noise::noise_action get_handshake_action(const session_info_type &session_info) const;
 
 private:
     session_info_s_type::iterator
          find_session_info(network::buffer_address_type addr) const;
     void check_protocol_status(session_info_type &session_info,
-                               const unit_type   &unit) const;
+                               const packet_type &pckt) const;
     void update_protocol_status(session_info_type &session_info,
-                                const unit_type   &unit) const;
+                                const packet_type &pckt) const;
     noise::buffer_type<header_data_size> derive_header_obfs_key(
         typename noise_context_type::cipher_state &header_cipher_state,
         std::uint64_t                              number) const;
@@ -107,11 +109,22 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
         decltype(auto) header_cipher_state =
             session_info.handshake_context.get_header_cipher_state_sender();
 
-        // Calls callback(action) to init packet
-        if (session_info.status == session_info_type::status_enum::is_connected)
-            callback(pckt);
-        else
-            session_info.handshake_context.init_packet(pckt);
+        bool rehandshake = needs_to_rehandshake(session_info);
+
+        // Adds retry unit places on unit 3 if limit of available batches after handshake
+        // has been reached
+        if (rehandshake)
+            pckt->units[2].header.type = unit_type::unit_type_enum::retry;
+        else {
+            // Calls callback(action) to init packet
+            if (session_info.status == session_info_type::status_enum::is_connected)
+                callback(pckt);
+            else
+                session_info.handshake_context.init_packet(pckt);
+        }
+
+        // Checks protocol status of passed session
+        check_protocol_status(session_info, pckt);
 
         // Performs rekey for encryption
         ++session_info.batches_sent_number;
@@ -121,13 +134,8 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
             ++session_info.sender_key_iteration_number;
         }
 
-        // Adds retry unit places on unit 3 if limit of available batches after handshake
-        // has been reached
-        if (needs_to_rehandshake(session_info))
-            pckt->units[2].header.type = unit_type::unit_type_enum::retry;
-
-        // Updates protocol status of passed session
-        check_protocol_status(session_info, pckt->units[0]);
+        // Update protocol status of passed session
+        update_protocol_status(session_info, pckt);
 
         for (std::size_t i = 0; i < pckt->units.size(); ++i) {
             unit_type &unit = pckt->units[i];
@@ -136,43 +144,38 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
             unit.header.key_iteration_number = session_info.sender_key_iteration_number;
 
             // Forces units to be dummy if necessary
-            if (i >= 2 && unit.header.type != unit_type::unit_type_enum::retry) {
-                unit.header.type = unit_type::unit_type_enum::data;
-                unit.header.flag = unit_type::flag_type_enum::drop;
-            }
+            if (i >= 2 && unit.header.type != unit_type::unit_type_enum::retry)
+                unit.header.type = unit_type::unit_type_enum::dummy;
 
             // Adds random padding
             {
                 // Determines payload size of the unit to define size of random
                 // padding
                 std::size_t payload_size;
-                if (unit.header.flag == unit_type::flag_type_enum::drop)
-                    payload_size = 0;
-                else {
-                    switch (unit.header.type) {
-                        case unit_type::unit_type_enum::session_request:
-                            payload_size = unit_config_type::hs1_size;
-                            break;
-                        case unit_type::unit_type_enum::session_created:
-                            payload_size = unit_config_type::hs2_size;
-                            break;
-                        case unit_type::unit_type_enum::session_confirmed:
-                            payload_size = unit_config_type::hs3_size;
-                            break;
-                        case unit_type::unit_type_enum::retry:
-                            payload_size = 0;
-                            break;
-                        case unit_type::unit_type_enum::hole_punch:
-                            payload_size = 8;
-                            break;
-                        case unit_type::unit_type_enum::data:
-                            payload_size = payload_data_size;
-                            break;
-                        default:
-                            throw noheap::runtime_error(
-                                buffer_owner, "Packet type[{}] is not allowed.",
-                                static_cast<std::size_t>(unit.header.type));
-                    }
+                switch (unit.header.type) {
+                    case unit_type::unit_type_enum::session_request:
+                        payload_size = unit_config_type::hs1_size;
+                        break;
+                    case unit_type::unit_type_enum::session_created:
+                        payload_size = unit_config_type::hs2_size;
+                        break;
+                    case unit_type::unit_type_enum::session_confirmed:
+                        payload_size = unit_config_type::hs3_size;
+                        break;
+                    case unit_type::unit_type_enum::hole_punch:
+                        payload_size = 8;
+                        break;
+                    case unit_type::unit_type_enum::data:
+                        payload_size = payload_data_size;
+                        break;
+                    case unit_type::unit_type_enum::dummy:
+                    case unit_type::unit_type_enum::retry:
+                        payload_size = 0;
+                        break;
+                    default:
+                        throw noheap::runtime_error(
+                            buffer_owner, "Packet type[{}] is not allowed.",
+                            static_cast<std::size_t>(unit.header.type));
                 }
 
                 // Adds random padding after payload data
@@ -184,8 +187,7 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
             }
 
             // Encrypts buffer data and authenticates based on the header
-            if (session_info.status == session_info_type::status_enum::is_connected
-                && unit.header.type == unit_type::unit_type_enum::data) {
+            if (unit.header.type == unit_type::unit_type_enum::data) {
                 payload_cipher_state.input_buffer.set(
                     {unit.buffer.data(), unit.buffer.size()},
                     unit.buffer_size_without_mac);
@@ -213,10 +215,10 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
         std::shuffle(pckt->units.begin(), pckt->units.end(), generator);
 
         // Dumps session info if
-        update_protocol_status(session_info, pckt->units[0]);
-        if (needs_to_rehandshake(session_info)) {
+        if (rehandshake) {
             session_info.reset_numbers();
             payload_cipher_state.dump();
+            ++session_info.handshake_number;
         }
 
     } catch (noheap::runtime_error &excp) {
@@ -269,8 +271,7 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
                     payload_cipher_state.rekey_decrypt();
 
                 // Tries to decrypt buffer data
-                if (session_info.status == session_info_type::status_enum::is_connected
-                    && test_unit.header.type == unit_type::unit_type_enum::data) {
+                if (test_unit.header.type == unit_type::unit_type_enum::data) {
                     payload_cipher_state.output_buffer.set(
                         {test_unit.buffer.data(), test_unit.buffer.size()},
                         test_unit.buffer.size());
@@ -296,6 +297,13 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
         // If it was not possible to decrypt all units in batch
         if (count_decrypted_units != pckt->units.size()) {
             ++session_info.undecrypted_batch_number;
+            // If performs rehandshake
+            if (session_info.status == session_info_type::status_enum::hs2
+                && session_info.handshake_number > 0)
+                return;
+
+            // If performs handshake or was failed to decrypt
+            // max_undecrypted_batches_number count packets after handshake
             if (session_info.status != session_info_type::status_enum::is_connected
                 || session_info.undecrypted_batch_number
                        == max_undecrypted_batches_number)
@@ -310,15 +318,20 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
                       return el_left.header.number < el_right.header.number;
                   });
 
+        // Sets next possible receiver units number
         session_info.receiver_units_number =
             pckt->units[pckt->units.size() - 1].header.number + 1;
-        check_protocol_status(session_info, pckt->units[0]);
-        update_protocol_status(session_info, pckt->units[0]);
+
+        // Checks protocol status of passed session
+        update_protocol_status(session_info, pckt);
 
         if (session_info.status == session_info_type::status_enum::is_connected)
             callback(std::move(pckt));
         else
             session_info.handshake_context.process_packet(std::move(pckt));
+
+        // Updates protocol status of passed session
+        check_protocol_status(session_info, pckt);
 
         if (pckt->units[2].header.type == unit_type::unit_type_enum::retry) {
             session_info.reset_numbers();
@@ -378,6 +391,10 @@ bool essu::protocol_type::needs_to_rehandshake(
                ? session_info.batches_sent_number >= max_available_batches_number
                : false;
 }
+noise::noise_role
+    essu::protocol_type::get_role(const session_info_type &session_info) const {
+    return session_info.handshake_context.get_role();
+}
 noise::noise_action essu::protocol_type::get_handshake_action(
     const session_info_type &session_info) const {
     return session_info.handshake_context.get_action();
@@ -389,24 +406,48 @@ essu::protocol_type::session_info_s_type::iterator
                         [&](auto el) { return el->addr == addr; });
 }
 void essu::protocol_type::check_protocol_status(session_info_type &session_info,
-                                                const unit_type   &unit) const {
+                                                const packet_type &pckt) const {
+    decltype(auto) payload_unit_one = pckt->units[0];
+    decltype(auto) payload_unit_two = pckt->units[1];
+
+    // Expects that the first payload unit is session request and the second payload unit
+    // is dummy - in generally it expects SESSION REQUEST UNIT
     if (session_info.status == session_info_type::status_enum::hs1
-        && unit.header.type != unit_type::unit_type_enum::session_request)
+        && (payload_unit_one.header.type != unit_type::unit_type_enum::session_request
+            || payload_unit_two.header.type != unit_type::unit_type_enum::dummy))
         throw noheap::runtime_error("Expected session request unit.");
+    // Expects that the first payload unit is session created and the second payload unit
+    // is dummy - in generally it expects SESSION CREATED UNIT
     else if (session_info.status == session_info_type::status_enum::hs2
-             && unit.header.type != unit_type::unit_type_enum::session_created)
+             && (payload_unit_one.header.type
+                     != unit_type::unit_type_enum::session_created
+                 || payload_unit_two.header.type != unit_type::unit_type_enum::dummy))
         throw noheap::runtime_error("Expected session created unit.");
+    // Expects that the first payload unit is session confirmed and the second payload
+    // unit is dummy - in generally it expects SESSION CREATED UNIT
     else if (session_info.status == session_info_type::status_enum::hs3
-             && unit.header.type != unit_type::unit_type_enum::session_confirmed)
+             && (payload_unit_one.header.type
+                     != unit_type::unit_type_enum::session_confirmed
+                 || payload_unit_two.header.type != unit_type::unit_type_enum::dummy))
         throw noheap::runtime_error("Expected session confirmed unit.");
+    // Expects that the first payload unit is data and the second payload
+    // unit is data or dummy - in generally it expects PAYLOAD UNIT if session is
+    // established
     else if (session_info.status == session_info_type::status_enum::is_connected
-             && unit.header.type != unit_type::unit_type_enum::data)
-        throw noheap::runtime_error("Expected unit to contain payload data.");
+             && (payload_unit_one.header.type != unit_type::unit_type_enum::data
+                 || (payload_unit_two.header.type != unit_type::unit_type_enum::data
+                     && payload_unit_two.header.type
+                            != unit_type::unit_type_enum::dummy)))
+        throw noheap::runtime_error("Expected payload unit.");
 }
 void essu::protocol_type::update_protocol_status(session_info_type &session_info,
-                                                 const unit_type   &unit) const {
+                                                 const packet_type &pckt) const {
+    decltype(auto) payload_unit_one = pckt->units[0];
+
+    // Increases session_info.status if session is not established and the first payload
+    // unit does not have wait_next flag
     if (session_info.status != session_info_type::status_enum::is_connected
-        && unit.header.flag != unit_type::flag_type_enum::wait_next)
+        && payload_unit_one.header.flag != unit_type::flag_type_enum::wait_next)
         session_info.status = typename session_info_type::status_enum(
             static_cast<std::size_t>(session_info.status) + 1);
 }

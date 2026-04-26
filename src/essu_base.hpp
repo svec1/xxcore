@@ -46,15 +46,15 @@ public:
         session_request = 0,
         session_created,
         session_confirmed,
-        retry,
         token_request,
         hole_punch,
         data,
+        retry,
+        dummy,
     };
     enum class flag_type_enum : noheap::ubyte {
         none = 0,
         wait_next,
-        drop,
     };
 
     struct header_data_type {

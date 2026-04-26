@@ -24,10 +24,8 @@ public:
         std::copy(reinterpret_cast<noheap::rbyte *>(buffer_tmp.begin()),
                   reinterpret_cast<noheap::rbyte *>(buffer_tmp.end()),
                   pckt->units[0].buffer.begin());
-        for (std::size_t i = 1; i < pckt->units.size(); ++i) {
-            pckt->units[i].header.type = decltype(pckt->units[0].header.type)::data;
-            pckt->units[i].header.flag = decltype(pckt->units[0].header.flag)::drop;
-        }
+        for (std::size_t i = 1; i < pckt->units.size(); ++i)
+            pckt->units[i].header.type = decltype(pckt->units[0].header.type)::dummy;
     }
     void process_packet(test_action::packet_type &&pckt) {
         audio_flow_type::buffer_type buffer_tmp;
