@@ -670,8 +670,13 @@ public:
     future_wrapper(future_type &&_future_object)
         : future_object(std::move(_future_object)) {}
 
-    future_wrapper(future_wrapper &&func)
-        : future_object(std::move(func.future_object)) {}
+    future_wrapper(future_wrapper &&other)
+        : future_object(std::move(other.future_object)) {}
+
+    future_wrapper &operator=(future_wrapper &&other) {
+        future_object = std::move(other.future_object);
+        return *this;
+    }
 
 public:
     TReturn get() {

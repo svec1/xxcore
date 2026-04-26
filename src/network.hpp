@@ -13,7 +13,6 @@ enum class ipv { v4 = 0, v6 };
 
 constexpr std::size_t max_count_addresses     = 4;
 constexpr std::size_t max_buffered_packets    = 16;
-constexpr std::size_t max_packet_size         = 2048;
 constexpr std::size_t timeout_ms              = 2500;
 constexpr std::size_t max_buffer_address_size = asio::ip::address_v6::bytes_type{}.size();
 
@@ -201,17 +200,6 @@ class udp_stream;
 template<typename T>
 concept Udp_stream = std::same_as<T, udp_stream<typename T::action_type, T::v>>;
 
-namespace detail {
-    struct buffered_packet_type {
-        noheap::buffer_bytes_type<max_packet_size, noheap::rbyte> buffer;
-        std::size_t                                               accepted_ms;
-    };
-    using buffer_packets_type = noheap::monotonic_array<
-        std::pair<buffer_address_type,
-                  noheap::ring_buffer<buffered_packet_type, max_buffered_packets>>,
-        max_count_addresses>;
-} // namespace detail
-
 template<Derived_from_action Action, ipv _v>
 class udp_stream {
 private:
@@ -225,7 +213,6 @@ private:
 public:
     static constexpr ipv v = _v;
 
-public:
     using basic_socket_type = asio::ip::udp;
     using socket_type       = basic_socket_type::socket;
     using action_type       = Action;
@@ -235,106 +222,60 @@ public:
     using port_type    = asio::ip::port_type;
     using async_future_wrapper = future_wrapper<std::size_t>;
 
-    static_assert(action_type::packet_type::size() < max_packet_size,
-                  "Packet size is too long.");
-
-public:
-    struct async_validation_type {
-        friend udp_stream;
-
-        using callback_type        = std::function<void()>;
-        using cancel_callback_type = std::function<void()>;
-
-        enum status_enum : std::size_t {
-            in_progress = 0,
-            completed,
-        };
-
-    public:
-        async_validation_type(async_validation_type &&) = default;
-        ~async_validation_type() {
-            if (status != status_enum::completed)
-                validate();
-        }
-
-    private:
-        async_validation_type(async_future_wrapper &&_async_operation,
-                              callback_type          _callback,
-                              cancel_callback_type _cancel_callback, status_enum _status)
-            : async_operation(std::move(_async_operation)), callback(_callback),
-              cancel_callback(_cancel_callback), status(_status) {}
-
-    public:
-        void validate() {
-            if (status == status_enum::completed)
-                return;
-            if (!async_operation.is_completed(timeout_ms))
-                cancel_callback();
-
-            status = status_enum::completed;
-            async_operation.get();
-            callback();
-        }
-
-    private:
-        cancel_callback_type cancel_callback;
-        async_future_wrapper async_operation;
-        callback_type        callback;
-        status_enum          status;
+private:
+    struct buffered_received_packet_type {
+        action_type::packet_type pckt;
+        std::size_t              received_ms;
     };
+    struct receive_buffer_of_address_type {
+        address_type                                                             addr;
+        noheap::ring_buffer<buffered_received_packet_type, max_buffered_packets> pckt_s;
+    };
+    struct send_buffer_of_address_type {
+        address_type addr;
+        noheap::ring_buffer<typename action_type::packet_type, max_buffered_packets>
+            pckt_s;
+    };
+    using receive_buffer =
+        noheap::monotonic_array<receive_buffer_of_address_type, max_count_addresses>;
+    using send_buffer =
+        noheap::monotonic_array<send_buffer_of_address_type, max_count_addresses>;
 
 public:
-    udp_stream();
-    udp_stream(udp_stream &&) = default;
-
-    template<typename TOther>
-    udp_stream(TOther &&stream);
-    template<typename TOther>
-    udp_stream &operator=(TOther &&stream);
-
-    udp_stream(asio::ip::port_type _port);
+    udp_stream(asio::io_context &io, asio::ip::port_type _port);
+    udp_stream(udp_stream &&)      = delete;
+    udp_stream(const udp_stream &) = delete;
 
     ~udp_stream();
 
 public:
-    Action                            &get_action() { return act; }
-    decltype(auto)                     get_executor() { return io.get_executor(); }
-    port_type                          get_port() const { return port; }
-    bool                               get_running() const { return running; }
-    const detail::buffer_packets_type &get_buffer_packets() const {
-        return buffer_packets;
+    decltype(auto) get_action() { return act; }
+    decltype(auto) get_executor() { return socket.get_executor(); }
+    decltype(auto) get_port() const { return port; }
+    decltype(auto) get_running() const { return running; }
+
+    void close() {
+        socket.close();
+
+        running.store(false);
+
+        cv_send.notify_all();
+        cv_receive.notify_all();
     }
 
-    void set_running(bool _running) { running = _running; }
+    void register_async_send();
+    void register_async_receive();
 
-    std::size_t run() {
-        io.restart();
-        return io.run();
-    }
-    void stop() { io.stop(); }
+    template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
+    void send_to(address_type addr);
+    template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
+    bool receive_from(address_type addr);
 
-public:
-    template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
-    void send_to(TWrapper_packet &pckt, address_type addr);
-    template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
-    async_validation_type async_send_to(TWrapper_packet &pckt, address_type addr);
-    template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
-    async_validation_type async_receive_from(TWrapper_packet &pckt, address_type addr);
-
-public:
     static buffer_address_type get_address_bytes(address_type addr);
     static address_type        get_address_object(buffer_address_type addr);
     static address_type        get_address_object(asio::ip::address addr);
 
 private:
-    template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
-    async_validation_type detail_async_receive_from(TWrapper_packet &pckt,
-                                                    address_type     addr,
-                                                    bool buffer_packets_is_empty);
-
-    void try_lock();
-    void unlock();
-
     static void handle_error(const system::error_code &ec);
 
 private:
@@ -343,23 +284,28 @@ private:
     static constexpr log_handler log{buffer_owner};
 
 private:
-    std::timed_mutex                   m;
-    std::unique_lock<std::timed_mutex> lock_m{m, std::defer_lock};
+    socket_type socket;
+    Action      act;
 
-    asio::io_context io;
-    socket_type      socket;
-    Action           act;
+    typename action_type::packet_type receive_pckt{};
+    endpoint_type                     receive_endpoint;
+
+    std::mutex              m_send;
+    std::mutex              m_receive;
+    std::condition_variable cv_send;
+    std::condition_variable cv_receive;
+
+    std::atomic<bool> running;
 
     port_type port;
-    bool      running;
 
-    detail::buffer_packets_type buffer_packets;
-    asio::ip::udp::endpoint     sender_endpoint_tmp;
+    send_buffer    send_buffer_packets;
+    receive_buffer receive_buffer_packets;
 };
 
 template<Derived_from_action Action, ipv v>
-udp_stream<Action, v>::udp_stream(port_type _port)
-    : port(_port), running(true), socket(io) {
+udp_stream<Action, v>::udp_stream(asio::io_context &io, port_type _port)
+    : socket(io), port(_port), running(true) {
     system::error_code ec;
 
     socket.open(get_ipv(), ec);
@@ -373,153 +319,150 @@ udp_stream<Action, v>::udp_stream(port_type _port)
 }
 
 template<Derived_from_action Action, ipv v>
-template<typename TOther>
-udp_stream<Action, v>::udp_stream(TOther &&stream) {
-    this->operator=(std::forward<TOther>(stream));
-}
-template<Derived_from_action Action, ipv v>
 udp_stream<Action, v>::~udp_stream() {
-    stop();
     socket.close();
 }
 
 template<Derived_from_action Action, ipv v>
-template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
-void udp_stream<Action, v>::send_to(TWrapper_packet &pckt, address_type addr) {
-    system::error_code      ec;
-    asio::ip::udp::endpoint receiver_endpoint(addr, this->port);
-    std::decay_t<TWrapper_packet>::prepare(
-        pckt,
-        this->get_address_bytes(this->get_address_object(receiver_endpoint.address())),
-        std::bind(&Action::init_packet, &this->act, std::placeholders::_1));
-    this->socket.send_to(asio::const_buffer(pckt.data(), pckt.size()),
-                         {receiver_endpoint.address(), receiver_endpoint.port()}, 0, ec);
-    handle_error({static_cast<int>(ec.value()), system::system_category()});
-}
-template<Derived_from_action Action, ipv v>
-template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
-udp_stream<Action, v>::async_validation_type
-    udp_stream<Action, v>::async_send_to(TWrapper_packet &pckt, address_type addr) {
-    return async_validation_type(
-        std::async(
-            std::launch::async,
-            [this, &pckt, receiver_endpoint = asio::ip::udp::endpoint(addr, this->port)]()
-                -> std::size_t {
-                system::error_code ec;
+void udp_stream<Action, v>::register_async_send() {
+    asio::post(socket.get_executor(), [this] {
+        // Waits for a signal from send_to that there is new packets for send
+        std::unique_lock<decltype(m_send)> m_send_lock{m_send};
+        cv_send.wait(m_send_lock, [this] {
+            if (!running.load())
+                return true;
 
-                std::decay_t<TWrapper_packet>::prepare(
-                    pckt,
-                    this->get_address_bytes(
-                        this->get_address_object(receiver_endpoint.address())),
-                    std::bind(&Action::init_packet, &this->act, std::placeholders::_1));
-                this->socket.send_to(
-                    asio::const_buffer(pckt.data(), pckt.size()),
-                    {receiver_endpoint.address(), receiver_endpoint.port()}, 0, ec);
-
-                return ec.value();
-            }),
-        {}, [this]() { this->socket.cancel(); },
-        async_validation_type::status_enum::in_progress);
-}
-
-template<Derived_from_action Action, ipv v>
-template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
-udp_stream<Action, v>::async_validation_type
-    udp_stream<Action, v>::async_receive_from(TWrapper_packet &pckt, address_type addr) {
-    return detail_async_receive_from(pckt, addr, false);
-}
-template<Derived_from_action Action, ipv v>
-template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
-udp_stream<Action, v>::async_validation_type
-    udp_stream<Action, v>::detail_async_receive_from(TWrapper_packet &pckt,
-                                                     address_type     addr,
-                                                     bool buffer_packets_is_empty) {
-    using packet_type = typename std::decay_t<TWrapper_packet>::packet_type;
-
-    const auto handle_receive = [this, required_addr = addr](TWrapper_packet &pckt) {
-        unlock();
-
-        const auto buffer_required_addr = get_address_bytes(required_addr);
-        auto       native_remote_addr_object =
-            this->get_address_object(sender_endpoint_tmp.address());
-        auto buffer_remote_addr = get_address_bytes(native_remote_addr_object);
-
-        if (buffer_remote_addr != buffer_required_addr) {
-            static constexpr auto make_buffered_packet = [](const TWrapper_packet &pckt) {
-                detail::buffered_packet_type packet_tmp;
-                packet_tmp.accepted_ms = get_now_ms();
-                std::copy(pckt.data(), pckt.data() + pckt.size(),
-                          packet_tmp.buffer.begin());
-                return packet_tmp;
-            };
-
-            try_lock();
-            if (const auto &it =
-                    std::find_if(buffer_packets.begin(), buffer_packets.end(),
-                                 [&buffer_remote_addr](const auto &it) {
-                                     return it.first == buffer_remote_addr;
-                                 });
-                it != buffer_packets.end()) {
-                it->second.push(make_buffered_packet(pckt));
-            } else if (buffer_packets.size() < max_count_addresses)
-                buffer_packets.push_back(typename decltype(buffer_packets)::value_type{
-                    buffer_remote_addr, {make_buffered_packet(pckt)}});
-            unlock();
-
-            this->detail_async_receive_from(pckt, required_addr, true).validate();
+            for (auto &buffer_of_address : this->send_buffer_packets)
+                if (buffer_of_address.pckt_s.size())
+                    return true;
+            return false;
+        });
+        for (auto &buffer_of_address : send_buffer_packets) {
+            while (buffer_of_address.pckt_s.size()) {
+                auto pckt = buffer_of_address.pckt_s.pop();
+                this->socket.async_send_to(
+                    asio::mutable_buffer{pckt.data(), pckt.size()},
+                    endpoint_type{buffer_of_address.addr, this->port}, 0,
+                    [this](system::error_code ec, std::size_t) {
+                        this->handle_error(ec);
+                    });
+            }
         }
+        this->register_async_send();
+    });
+}
+template<Derived_from_action Action, ipv v>
+void udp_stream<Action, v>::register_async_receive() {
+    // Waits for a new packet
+    this->socket.async_receive_from(
+        asio::mutable_buffer{receive_pckt.data(), receive_pckt.size()}, receive_endpoint,
+        0, [this](system::error_code ec, std::size_t) {
+            this->handle_error(ec);
 
-        std::decay_t<TWrapper_packet>::handle(
-            std::move(pckt), buffer_remote_addr,
-            std::bind(&Action::process_packet, &this->act, std::placeholders::_1));
-    };
+            // Adds the packet to receive buffer
+            std::lock_guard<decltype(m_receive)> m_receive_lock{m_receive};
+            auto remote_addr = this->get_address_object(receive_endpoint.address());
+            if (const auto &it = std::find_if(
+                    receive_buffer_packets.begin(), receive_buffer_packets.end(),
+                    [&remote_addr](const auto &it) { return it.addr == remote_addr; });
+                it != receive_buffer_packets.end())
+                it->pckt_s.push(
+                    buffered_received_packet_type{receive_pckt, get_now_ms()});
+            else if (receive_buffer_packets.size() < max_count_addresses)
+                receive_buffer_packets.push_back(
+                    typename decltype(receive_buffer_packets)::value_type{
+                        remote_addr,
+                        {buffered_received_packet_type{receive_pckt, get_now_ms()}}});
 
-    // Only 1 thread is allowed to receive packet
-    try_lock();
+            // Signals receive_from that there is new packet for local receive
+            cv_receive.notify_all();
+            this->register_async_receive();
+        });
+}
 
-    if (!buffer_packets_is_empty) {
-        if (const auto &it = std::find_if(
-                buffer_packets.begin(), buffer_packets.end(),
-                [buffer_remote_addr = get_address_bytes(addr)](const auto &it) {
-                    return it.first == buffer_remote_addr;
-                });
-            it != buffer_packets.end() && it->second.size() < max_buffered_packets) {
-            while (it->second.size()) {
-                auto buffered_packet = it->second.pop();
+template<Derived_from_action Action, ipv v>
+template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
+void udp_stream<Action, v>::send_to(address_type addr) {
+    typename action_type::packet_type pckt{};
 
-                if (get_now_ms() - buffered_packet.accepted_ms >= timeout_ms)
+    // Performs init a packet base on TWrapper_packet protocol
+    std::decay_t<TWrapper_packet>::prepare(
+        pckt, this->get_address_bytes(this->get_address_object(addr)),
+        std::bind(&Action::init_packet, &this->act, std::placeholders::_1));
+
+    // Pushes sending packet to send buffer
+    {
+        std::lock_guard<decltype(m_send)> m_send_lock{m_send};
+        if (const auto &it =
+                std::find_if(send_buffer_packets.begin(), send_buffer_packets.end(),
+                             [addr](const auto &it) { return it.addr == addr; });
+            it != send_buffer_packets.end()) {
+            it->pckt_s.push(pckt);
+        } else if (receive_buffer_packets.size() < max_count_addresses)
+            send_buffer_packets.push_back(
+                typename decltype(send_buffer_packets)::value_type{addr, {pckt}});
+    }
+
+    // Wakes the main loop of sending packets up(register_async_send)
+    cv_send.notify_one();
+}
+
+template<Derived_from_action Action, ipv v>
+template<Compatible_wrapper_packet_with_action<Action> TWrapper_packet>
+bool udp_stream<Action, v>::receive_from(address_type addr) {
+    decltype(this->receive_buffer_packets.begin()) it;
+
+    typename action_type::packet_type pckt;
+    bool                              find_received_packet = false;
+
+    // Tries to get a packet from receive buffer
+    {
+        std::lock_guard<decltype(m_receive)> m_receive_lock{m_receive};
+        if (it = std::find_if(
+                receive_buffer_packets.begin(), receive_buffer_packets.end(),
+                [remote_addr = addr](const auto &it) { return it.addr == remote_addr; });
+            it != receive_buffer_packets.end()) {
+            while (it->pckt_s.size()) {
+                auto pckt_tmp = it->pckt_s.pop();
+
+                if (get_now_ms() - pckt_tmp.received_ms >= timeout_ms)
                     continue;
 
-                *static_cast<packet_type *>(&pckt) =
-                    *reinterpret_cast<packet_type *>(buffered_packet.buffer.data());
-
-                std::decay_t<TWrapper_packet>::handle(
-                    std::move(pckt), this->get_address_bytes(addr),
-                    std::bind(&Action::process_packet, &this->act,
-                              std::placeholders::_1));
-                return async_validation_type(
-                    {}, {}, {}, async_validation_type::status_enum::completed);
+                pckt                 = pckt_tmp.pckt;
+                find_received_packet = true;
+                break;
             }
         }
     }
 
-    return async_validation_type(
-        socket.async_receive_from(asio::mutable_buffer{pckt.data(), pckt.size()},
-                                  sender_endpoint_tmp, 0, asio::use_future),
-        std::bind(handle_receive, std::ref(pckt)), [this]() { this->socket.cancel(); },
-        async_validation_type::status_enum::in_progress);
-}
+    // Waits for a signal from register_async_receive that a packet was received
+    if (!find_received_packet) {
+        auto                                  before_ms = get_now_ms();
+        std::unique_lock<decltype(m_receive)> m_receive_lock{m_receive};
+        if (!cv_receive.wait_for(
+                m_receive_lock, std::chrono::milliseconds(timeout_ms), [&] {
+                    if (!running.load())
+                        return true;
+                    return (it = std::find_if(
+                                this->receive_buffer_packets.begin(),
+                                this->receive_buffer_packets.end(),
+                                [addr](const auto &it) { return it.addr == addr; }))
+                               != this->receive_buffer_packets.end()
+                           && it->pckt_s.size();
+                }))
+            return false;
 
-template<Derived_from_action Action, ipv v>
-void udp_stream<Action, v>::try_lock() {
-    if (!lock_m.try_lock_for(std::chrono::milliseconds(timeout_ms)))
-        handle_error(system::error_code(asio::error::timed_out));
-}
-template<Derived_from_action Action, ipv v>
-void udp_stream<Action, v>::unlock() {
-    lock_m.unlock();
-}
+        pckt = it->pckt_s.pop().pckt;
+        m_receive_lock.unlock();
+    }
 
+    // Handle the packet base on TWrapper_packet protocol
+    std::decay_t<TWrapper_packet>::handle(
+        std::move(pckt), this->get_address_bytes(addr),
+        std::bind(&Action::process_packet, &this->act, std::placeholders::_1));
+
+    return true;
+}
 template<Derived_from_action Action, ipv v>
 buffer_address_type udp_stream<Action, v>::get_address_bytes(address_type addr) {
     return noheap::to_new_buffer<buffer_address_type>(addr.to_bytes());

@@ -43,6 +43,7 @@ private:
 
 class xxcore_service {
 public:
+    static constexpr std::size_t workers_number  = network::max_count_addresses;
     static constexpr std::size_t max_size_config = BOOST_JSON_STACK_BUFFER_SIZE;
     using buffer_config_type = noheap::buffer_type<char, max_size_config>;
 
@@ -76,18 +77,26 @@ private:
 private:
     config_type config{};
 
+    asio::io_context                                          io;
+    noheap::buffer_type<future_wrapper<void>, workers_number> workers;
+
     udp_stream   stream;
     address_type addr;
 };
 
 xxcore_service::xxcore_service(address_type &&_addr, asio::ip::port_type _port)
-    : stream(_port), addr(_addr) {
+    : stream(io, _port), addr(_addr) {
 }
 
 void xxcore_service::run() {
-    future_wrapper<void> async_run([this]() { this->stream.run(); });
-    asio::executor_work_guard<decltype(stream.get_executor())> work_guard(
-        stream.get_executor());
+    asio::executor_work_guard<asio::io_context::executor_type> work_guard(
+        io.get_executor());
+
+    for (auto &worker : workers)
+        worker = typename std::decay_t<decltype(worker)>{[this] { this->io.run(); }};
+
+    stream.register_async_send();
+    stream.register_async_receive();
 
     session_type session_test(stream, addr, config.role, {}, config.pre_shared_key,
                               {config.local_private_key, config.local_public_key},
@@ -99,7 +108,8 @@ void xxcore_service::run() {
 
         session_test.run_stream_session();
     } catch (...) {
-        work_guard.reset();
+        stream.close();
+        io.stop();
         throw;
     }
 }

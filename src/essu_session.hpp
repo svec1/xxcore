@@ -30,12 +30,8 @@ private:
     void throw_error(std::format_string<Args...> format, Args &&...args);
 
 private:
-    template<network::Udp_stream TStream_tmp>
-    static void node_send(TStream_tmp &stream, essu::wrapper_packet_type &pckt,
-                          const essu::session_info_type &session_info);
-    template<network::Udp_stream TStream_tmp>
-    static void node_receive(TStream_tmp &stream, essu::wrapper_packet_type &pckt,
-                             const session_info_type &session_info);
+    void send(const essu::session_info_type &session_info);
+    void receive(const session_info_type &session_info);
 
 public:
     static constexpr noheap::log_impl::owner_impl::buffer_type buffer_owner =
@@ -75,8 +71,7 @@ essu::session<TStream>::session(udp_stream                             &_stream,
 }
 template<network::Udp_stream TStream>
 void essu::session<TStream>::establish_connection() {
-    essu::wrapper_packet_type pckt{};
-    const auto               &protocol = pckt.get_protocol();
+    const auto &protocol = essu::wrapper_packet_type::get_protocol();
 
     // Establishes connection
     try {
@@ -85,9 +80,9 @@ void essu::session<TStream>::establish_connection() {
         while (true) {
             auto action = protocol.get_handshake_action(info);
             if (action == noise::noise_action::WRITE_MESSAGE)
-                node_send(stream, pckt, info);
+                send(info);
             else if (action == noise::noise_action::READ_MESSAGE)
-                node_receive(stream, pckt, info);
+                receive(info);
             else
                 break;
         }
@@ -106,38 +101,29 @@ void essu::session<TStream>::run_stream_session() {
 
     while (true) {
         try {
-            future_wrapper future_object_to_send([&]() {
+            future_wrapper future_async_send([&]() {
                 try {
-                    essu::wrapper_packet_type pckt{};
-
-                    while (running.load()
-                           && !pckt.get_protocol().needs_to_rehandshake(info))
-                        node_send(stream, pckt, info);
+                    while (running.load() && !protocol.needs_to_rehandshake(info))
+                        send(info);
                 } catch (...) {
                     running.store(false);
                     throw;
                 }
             });
-            future_wrapper future_object_to_receive([&]() {
+            future_wrapper future_async_receive([&]() {
                 try {
-                    essu::wrapper_packet_type pckt{};
-
-                    while (running.load()
-                           && !pckt.get_protocol().needs_to_rehandshake(info))
-                        node_receive(stream, pckt, info);
+                    while (running.load() && !protocol.needs_to_rehandshake(info))
+                        receive(info);
                 } catch (...) {
                     running.store(false);
                     throw;
                 }
             });
-
-            future_object_to_send.get();
-            future_object_to_receive.get();
 
         } catch (noheap::runtime_error &excp) {
             this->throw_error("Connection terminated. {}", excp.what());
         }
-
+        noheap::println("Rehandshake in progress...{}", running.load());
         establish_connection();
     }
 }
@@ -157,29 +143,16 @@ void essu::session<TStream>::throw_error(std::format_string<Args...> format,
 }
 
 template<network::Udp_stream TStream>
-template<network::Udp_stream TStream_tmp>
-void essu::session<TStream>::node_send(TStream_tmp               &stream,
-                                       essu::wrapper_packet_type &pckt,
-                                       const session_info_type   &session_info) {
-    stream.template send_to<decltype(pckt)>(
-        pckt, TStream::get_address_object(session_info.addr));
+void essu::session<TStream>::send(const session_info_type &session_info) {
+    stream.template send_to<essu::wrapper_packet_type>(
+        TStream::get_address_object(session_info.addr));
 }
 
 template<network::Udp_stream TStream>
-template<network::Udp_stream TStream_tmp>
-void essu::session<TStream>::node_receive(TStream_tmp               &stream,
-                                          essu::wrapper_packet_type &pckt,
-                                          const session_info_type   &session_info) {
-    try {
-        stream
-            .template async_receive_from<decltype(pckt)>(
-                pckt, TStream::get_address_object(session_info.addr))
-            .validate();
-    } catch (system::system_error &excp) {
-        if (excp.code().value() != asio::error::operation_aborted)
-            throw;
-        throw noheap::runtime_error(buffer_owner, "Timeout has been reached.");
-    }
+void essu::session<TStream>::receive(const session_info_type &session_info) {
+    if (!stream.template receive_from<essu::wrapper_packet_type>(
+            TStream::get_address_object(session_info.addr)))
+        throw noheap::runtime_error("Timeout has been reached.");
 }
 
 #endif
