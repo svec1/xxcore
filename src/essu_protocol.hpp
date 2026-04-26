@@ -48,7 +48,8 @@ private:
     std::size_t sender_key_iteration_number;
     std::size_t receiver_key_iteration_number;
     std::size_t undecrypted_batch_number;
-    std::size_t handshake_number;
+
+    std::size_t handshake_number = 0;
 };
 
 struct protocol_type
@@ -323,7 +324,7 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
             pckt->units[pckt->units.size() - 1].header.number + 1;
 
         // Checks protocol status of passed session
-        update_protocol_status(session_info, pckt);
+        check_protocol_status(session_info, pckt);
 
         if (session_info.status == session_info_type::status_enum::is_connected)
             callback(std::move(pckt));
@@ -331,11 +332,12 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
             session_info.handshake_context.process_packet(std::move(pckt));
 
         // Updates protocol status of passed session
-        check_protocol_status(session_info, pckt);
+        update_protocol_status(session_info, pckt);
 
         if (pckt->units[2].header.type == unit_type::unit_type_enum::retry) {
             session_info.reset_numbers();
             payload_cipher_state.dump();
+            ++session_info.handshake_number;
         }
 
     } catch (noheap::runtime_error &excp) {
@@ -389,7 +391,7 @@ bool essu::protocol_type::needs_to_rehandshake(
     const session_info_type &session_info) const {
     return session_info.handshake_context.get_role() == noise::noise_role::INITIATOR
                ? session_info.batches_sent_number >= max_available_batches_number
-               : false;
+               : session_info.status == session_info_type::status_enum::hs1;
 }
 noise::noise_role
     essu::protocol_type::get_role(const session_info_type &session_info) const {
