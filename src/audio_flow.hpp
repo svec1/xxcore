@@ -33,12 +33,10 @@ public:
                 while (running.load()) {
                     buffer_type buffer_tmp;
 
-                    std::size_t current_out_stream_size;
-                    bool        lost = true;
+                    bool lost = true;
 
                     {
                         std::lock_guard lock(out_stream_m);
-                        current_out_stream_size = out_stream_buffer.size();
                         if (auto el = out_stream_buffer.pop(); el.has_value()) {
                             buffer_tmp = el.value();
                             lost       = false;

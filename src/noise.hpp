@@ -165,6 +165,7 @@ public:
         .cipher_id  = static_cast<std::uint16_t>(config.cipher),
         .hash_id    = static_cast<std::uint16_t>(config.hash),
         .hybrid_id  = hybrid_kyber1024 ? NOISE_DH_KYBER1024 : NOISE_DH_NONE,
+        .reserved   = {},
     };
 
 public:
@@ -524,7 +525,7 @@ void noise::noise_context<_config>::hash_state::hkdf(
 
 // Noise context
 template<noise::noise_context_config _config>
-noise::noise_context<_config>::~noise_context() {
+noise::noise_context<_config>::~noise_context<_config>() {
     this->dump();
 }
 template<noise::noise_context_config _config>

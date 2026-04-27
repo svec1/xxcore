@@ -75,8 +75,7 @@ private:
 private:
     config_type config{};
 
-    asio::io_context                                          io;
-    noheap::buffer_type<future_wrapper<void>, workers_number> workers;
+    asio::io_context io;
 
     udp_stream   stream;
     address_type addr;
@@ -90,26 +89,35 @@ void xxcore_service::run() {
     asio::executor_work_guard<asio::io_context::executor_type> work_guard(
         io.get_executor());
 
+    noheap::buffer_type<future_wrapper<void>, workers_number> workers;
     for (auto &worker : workers)
         worker = typename std::decay_t<decltype(worker)>{[this] { this->io.run(); }};
 
     stream.register_async_send();
     stream.register_async_receive();
 
+    // Tests
     session_type session_test(stream, addr, config.role, {}, config.pre_shared_key,
                               {config.local_private_key, config.local_public_key},
                               config.remote_public_key);
 
     try {
         session_test.establish_connection();
+        session_test.register_stream_session();
         log.to_all("Connection established.");
-
-        session_test.run_stream_session();
     } catch (...) {
+        session_test.get_running().store(false);
         stream.close();
         io.stop();
         throw;
     }
+
+    session_test.get_running().store(false);
+    stream.close();
+    io.stop();
+
+    for (auto &worker : workers)
+        worker.get();
 }
 
 void xxcore_service::configurate(buffer_config_type &buffer, bool generate_new_keypair) {

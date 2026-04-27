@@ -22,8 +22,9 @@ public:
 public:
     // Establishes connection with node(remote_addr): performs noise handshake
     void establish_connection();
+    void register_stream_session();
 
-    void run_stream_session();
+    std::atomic<bool> &get_running() { return running; }
 
 private:
     template<typename... Args>
@@ -41,8 +42,7 @@ private:
     static constexpr log_handler log{buffer_owner};
 
 private:
-    udp_stream &stream;
-
+    udp_stream       &stream;
     session_info_type info;
 
     noheap::buffer_chars_type<
@@ -71,9 +71,7 @@ essu::session<TStream>::session(udp_stream                             &_stream,
 }
 template<network::Udp_stream TStream>
 void essu::session<TStream>::establish_connection() {
-    const auto &protocol = essu::wrapper_packet_type::get_protocol();
-
-    // Establishes connection
+    decltype(auto) protocol = essu::wrapper_packet_type::get_protocol();
     try {
         // Performs noise handshake
         protocol.start_handshake(info);
@@ -89,46 +87,56 @@ void essu::session<TStream>::establish_connection() {
 
         protocol.stop_handshake(info);
     } catch (noheap::runtime_error &excp) {
-        this->throw_error("Failed to establish connection. {}", excp.what());
+        this->throw_error("Failed to establish connection [{}]", excp.what());
     }
 }
 
 template<network::Udp_stream TStream>
-void essu::session<TStream>::run_stream_session() {
-    const auto &protocol = essu::wrapper_packet_type::get_protocol();
-
+void essu::session<TStream>::register_stream_session() {
     running.store(true);
+    asio::post(stream.get_executor(), [this] {
+        decltype(auto) protocol = essu::wrapper_packet_type::get_protocol();
+        while (running.load()) {
+            try {
+                std::atomic<bool> io_running = true;
 
-    while (true) {
-        try {
-            future_wrapper future_async_send([&]() {
-                try {
-                    while (running.load() && !protocol.needs_to_rehandshake(info))
-                        send(info);
-                } catch (...) {
-                    running.store(false);
-                    throw;
-                }
-            });
-            future_wrapper future_async_receive([&]() {
-                try {
-                    while (running.load() && !protocol.needs_to_rehandshake(info))
-                        receive(info);
-                } catch (...) {
-                    running.store(false);
-                    throw;
-                }
-            });
+                future_wrapper future_async_send([this, &io_running]() {
+                    try {
+                        while (io_running.load() && this->running.load()
+                               && !protocol.needs_to_rehandshake(info))
+                            this->send(info);
+                    } catch (...) {
+                        io_running.store(false);
+                        throw;
+                    }
+                });
+                future_wrapper future_async_receive([this, &io_running]() {
+                    try {
+                        while (io_running.load() && this->running.load()
+                               && !protocol.needs_to_rehandshake(info))
+                            receive(info);
+                    } catch (...) {
+                        io_running.store(false);
+                        throw;
+                    }
+                });
 
-        } catch (noheap::runtime_error &excp) {
-            this->throw_error("Connection terminated. {}", excp.what());
+                future_async_send.get();
+                future_async_receive.get();
+
+                // Sends a retry packet to signal the responder to rehandshake
+                if (protocol.get_role(info) == noise::noise_role::INITIATOR)
+                    send(info);
+
+                establish_connection();
+
+            } catch (noheap::runtime_error &excp) {
+                running.store(false);
+                this->throw_error("Connection terminated [{}]", excp.what());
+            }
         }
-        // Sends a retry packet to signal the responder to rehandshake
-        if (protocol.get_role(info) == noise::noise_role::INITIATOR)
-            send(info);
-        noheap::println("Rehandshake in progress...{}", running.load());
-        establish_connection();
-    }
+        running.store(false);
+    });
 }
 
 template<network::Udp_stream TStream>

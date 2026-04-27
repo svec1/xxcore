@@ -1,5 +1,7 @@
 #include <fstream>
 
+#include <openssl/evp.h>
+
 #include "xxcore_service.hpp"
 
 using namespace boost;
@@ -121,7 +123,6 @@ void write_config(xxcore_service::buffer_config_type &buffer) {
 }
 
 void print_cfg(const xxcore_config &cfg) {
-    using ca_type = stream_audio::ca_type;
     using nc_type = essu::noise_context_type;
 
     log_main.to_console(" -- Sound architecture: {}", dba::arsnd_name);

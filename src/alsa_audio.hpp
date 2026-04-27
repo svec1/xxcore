@@ -10,7 +10,7 @@ class audio : public noheap::pseudoheap_monotonic_array<1024>, public base_audio
 protected:
     static constexpr snd_pcm_access_t access = SND_PCM_ACCESS_RW_INTERLEAVED;
     static constexpr snd_pcm_format_t format =
-        []<typename T, std::integral_constant<std::size_t, sizeof(T)> wrapper = {}>(T t) {
+        []<typename T, std::integral_constant<std::size_t, sizeof(T)> wrapper = {}>(T) {
         if constexpr (wrapper() == 8)
             return SND_PCM_FORMAT_S8;
         else if constexpr (wrapper() == 16)

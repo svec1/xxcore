@@ -120,8 +120,8 @@ struct decoy_action : public action<TPacket> {
     using packet_type = decoy_action::packet_type;
 
 public:
-    void init_packet(packet_type &pckt) {}
-    void process_packet(packet_type &&pckt) {}
+    void init_packet(packet_type &) {}
+    void process_packet(packet_type &&) {}
 };
 
 template<Packet_native_t T, noheap::log_impl::owner_impl::buffer_type _buffer_owner>
@@ -305,7 +305,7 @@ private:
 
 template<Derived_from_action Action, ipv v>
 udp_stream<Action, v>::udp_stream(asio::io_context &io, port_type _port)
-    : socket(io), port(_port), running(true) {
+    : socket(io), running(true), port(_port) {
     system::error_code ec;
 
     socket.open(get_ipv(), ec);
@@ -437,7 +437,6 @@ bool udp_stream<Action, v>::receive_from(address_type addr) {
 
     // Waits for a signal from register_async_receive that a packet was received
     if (!find_received_packet) {
-        auto                                  before_ms = get_now_ms();
         std::unique_lock<decltype(m_receive)> m_receive_lock{m_receive};
         if (!cv_receive.wait_for(
                 m_receive_lock, std::chrono::milliseconds(timeout_ms), [&] {

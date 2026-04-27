@@ -7,6 +7,13 @@ struct noise_handshake_context {
 public:
     using buffer_unique_value_type = noise::buffer_type<32>;
 
+    enum class status_enum : std::size_t {
+        hs1,
+        hs2,
+        hs3,
+        is_complete,
+    };
+
 public:
     noise_handshake_context() = default;
     noise_handshake_context(noise_handshake_context &&other);
@@ -20,6 +27,7 @@ public:
     void init_packet(packet_type &pckt);
     void process_packet(packet_type &&pckt);
 
+    bool                                       is_complete() const;
     noise::noise_action                        get_action() const;
     noise::noise_role                          get_role() const;
     buffer_unique_value_type                   get_unique_value() const;
@@ -37,6 +45,8 @@ private:
     void generate_posthandshake_unique_values();
 
 private:
+    status_enum status;
+
     noise_context_type                        noise_ctx;
     typename noise_context_type::cipher_state payload_cipher_state;
     typename noise_context_type::cipher_state header_cipher_state_sender;
@@ -50,7 +60,6 @@ private:
     noise_context_type::dh_key_type  ephemeral_obfs_key;
 
     typename noise::buffer_handshake_packet_type buffer_handshake_message{};
-    std::size_t                                  number_handshake_parts;
     std::size_t                                  offset_noise_handshake_unit;
     bool                                         fragmentation;
 
@@ -93,7 +102,7 @@ void essu::noise_handshake_context::init_packet(packet_type &pckt) {
     // Gets noise message
     if (!fragmentation) {
         // Generates random value
-        if (number_handshake_parts == 2) {
+        if (status == status_enum::hs2) {
             handshake_payload =
                 noheap::to_buffer<std::decay_t<decltype(handshake_payload)>>(
                     noheap::get_random_bytes<
@@ -108,7 +117,7 @@ void essu::noise_handshake_context::init_packet(packet_type &pckt) {
         noise_ctx.set_handshake_message();
 
         // Adds ephemeral key obfuscation on ephemeral key
-        if (number_handshake_parts == 0) {
+        if (status == status_enum::hs1) {
             std::transform(buffer_handshake_message.begin(),
                            buffer_handshake_message.begin() + ephemeral_obfs_key.size(),
                            ephemeral_obfs_key.data(), buffer_handshake_message.begin(),
@@ -124,12 +133,14 @@ void essu::noise_handshake_context::init_packet(packet_type &pckt) {
     offset_noise_handshake_unit += payload_unit.buffer.size();
 
     // Determines type of payload data
-    if (number_handshake_parts == 0)
+    if (status == status_enum::hs1)
         payload_unit.header.type = unit_type::unit_type_enum::session_request;
-    else if (number_handshake_parts == 1)
+    else if (status == status_enum::hs2)
         payload_unit.header.type = unit_type::unit_type_enum::session_created;
-    else if (number_handshake_parts == 2)
+    else if (status == status_enum::hs3)
         payload_unit.header.type = unit_type::unit_type_enum::session_confirmed;
+    else
+        throw noheap::runtime_error("Unexpected behaviour during the noise handshake.");
 
     // If fragmentation
     if (offset_noise_handshake_unit < noise_ctx.get_handshake_buffer().get().size) {
@@ -138,12 +149,11 @@ void essu::noise_handshake_context::init_packet(packet_type &pckt) {
         return;
     }
 
-    payload_unit.header.flag    = decltype(payload_unit.header.flag)::none;
     buffer_handshake_message    = {};
     offset_noise_handshake_unit = 0;
     fragmentation               = false;
 
-    ++number_handshake_parts;
+    status = status_enum(static_cast<std::size_t>(status) + 1);
 }
 void essu::noise_handshake_context::process_packet(packet_type &&pckt) {
     check_noise_action(noise::noise_action::READ_MESSAGE);
@@ -152,12 +162,14 @@ void essu::noise_handshake_context::process_packet(packet_type &&pckt) {
 
     // Determines size of payload data
     std::size_t payload_size;
-    if (number_handshake_parts == 0)
+    if (status == status_enum::hs1)
         payload_size = unit_config_type::hs1_size;
-    else if (number_handshake_parts == 1)
+    else if (status == status_enum::hs2)
         payload_size = unit_config_type::hs2_size;
-    else if (number_handshake_parts == 2)
+    else if (status == status_enum::hs3)
         payload_size = unit_config_type::hs3_size;
+    else
+        throw noheap::runtime_error("Unexpected behaviour during the noise handshake.");
 
     // Copies accepted unit to buffer of noise handshake message
     std::copy(payload_unit.buffer.begin(), payload_unit.buffer.end(),
@@ -169,13 +181,13 @@ void essu::noise_handshake_context::process_packet(packet_type &&pckt) {
         && payload_unit.header.flag == decltype(payload_unit.header.flag)::wait_next)
         return;
 
-    if (number_handshake_parts == 0)
+    if (status == status_enum::hs1)
         // Deletes ephemeral key obfuscation
         std::transform(buffer_handshake_message.begin(),
                        buffer_handshake_message.begin() + ephemeral_obfs_key.size(),
                        ephemeral_obfs_key.begin(), buffer_handshake_message.begin(),
                        std::bit_xor{});
-    else if (number_handshake_parts == 2)
+    else if (status == status_enum::hs2)
         // Sets buffer to get random value
         noise_ctx.get_handshake_payload_buffer().set(
             {handshake_payload.data(), handshake_payload.size()}, 0);
@@ -187,7 +199,7 @@ void essu::noise_handshake_context::process_packet(packet_type &&pckt) {
 
     buffer_handshake_message    = {};
     offset_noise_handshake_unit = 0;
-    ++number_handshake_parts;
+    status                      = status_enum(static_cast<std::size_t>(status) + 1);
 }
 
 typename essu::noise_context_type::cipher_state &
@@ -201,6 +213,9 @@ typename essu::noise_context_type::cipher_state &
 typename essu::noise_context_type::cipher_state &
     essu::noise_handshake_context::get_header_cipher_state_receiver() {
     return header_cipher_state_receiver;
+}
+bool essu::noise_handshake_context::is_complete() const {
+    return status == status_enum::is_complete;
 }
 noise::noise_action essu::noise_handshake_context::get_action() const {
     return fragmentation ? noise::noise_action::WRITE_MESSAGE : noise_ctx.get_action();
@@ -220,7 +235,7 @@ const essu::noise_context_type::dh_key_type &
 void essu::noise_handshake_context::start() {
     check_noise_action(noise::noise_action::NONE);
 
-    number_handshake_parts      = 0;
+    status                      = status_enum::hs1;
     offset_noise_handshake_unit = 0;
     fragmentation               = false;
     buffer_handshake_message    = {};
@@ -263,7 +278,7 @@ void essu::noise_handshake_context::check_noise_action(noise::noise_action expec
 
     if (action == noise::noise_action::FAILED)
         throw noheap::runtime_error("Failed to handshake.");
-    else if (number_handshake_parts > 3)
+    else if (status == status_enum::is_complete)
         throw noheap::runtime_error("Unexpected behaviour during the noise handshake.");
 
     if (action == expected)

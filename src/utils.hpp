@@ -682,6 +682,8 @@ public:
     TReturn get() {
         if constexpr (!std::same_as<TReturn, void>)
             return future_object.get();
+        else
+            future_object.get();
     }
     bool valid() const { return future_object.valid(); }
 
