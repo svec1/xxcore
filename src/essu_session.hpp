@@ -96,9 +96,9 @@ void essu::session<TStream>::register_connection() {
     running.store(true);
     asio::post(stream.get_executor(), [this] {
         std::optional<noheap::runtime_error> excp;
-        try {
-            decltype(auto) protocol = essu::wrapper_packet_type::get_protocol();
-            while (running.load()) {
+        while (running.load()) {
+            try {
+                decltype(auto)    protocol   = essu::wrapper_packet_type::get_protocol();
                 std::atomic<bool> io_running = true;
 
                 future_wrapper future_async_send([this, &io_running]() {
@@ -125,15 +125,12 @@ void essu::session<TStream>::register_connection() {
                 future_async_send.get();
                 future_async_receive.get();
 
-                // Sends a retry packet to signal the responder to rehandshake
-                if (protocol.needs_to_rehandshake(info)
-                    && protocol.get_role(info) == noise::noise_role::INITIATOR)
-                    send(info);
-
-                establish_connection();
+            } catch (noheap::runtime_error &_excp) {
+                excp = _excp;
+                break;
             }
-        } catch (noheap::runtime_error &_excp) {
-            excp = _excp;
+
+            establish_connection();
         }
 
         running.store(false);

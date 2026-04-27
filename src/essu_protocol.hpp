@@ -32,16 +32,15 @@ public:
 private:
     noise_handshake_context handshake_context;
 
-    std::uint64_t batches_sent_number;
-    std::uint64_t sender_units_number;
-    std::uint64_t receiver_units_number;
-    std::uint64_t sender_key_iteration_number;
-    std::uint64_t receiver_key_iteration_number;
-    std::uint64_t undecrypted_batch_number;
+    std::atomic<std::uint64_t> batches_sent_number;
+    std::atomic<std::uint64_t> batches_received_number;
+    std::uint64_t              sender_units_number;
+    std::uint64_t              receiver_units_number;
+    std::uint64_t              sender_key_iteration_number;
+    std::uint64_t              receiver_key_iteration_number;
+    std::uint64_t              undecrypted_batch_number;
 
-    std::uint64_t handshake_number       = 0;
-    bool          sent_session_retry     = false;
-    bool          received_session_retry = false;
+    std::uint64_t handshake_number = 0;
 };
 
 struct protocol_type final
@@ -73,8 +72,7 @@ public:
 private:
     session_info_s_type::iterator
          find_session_info(network::buffer_address_type addr) const;
-    void check_protocol_compliance(bool                      handshake_complete,
-                                   std::uint64_t             handshake_number,
+    void check_protocol_compliance(const session_info_type  &session_info,
                                    unit_type::unit_type_enum batch_type,
                                    unit_type::unit_type_enum payload_unit_two_type) const;
     noise::buffer_type<header_data_size> derive_header_obfs_key(
@@ -104,12 +102,6 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
         session_info.handshake_context.get_header_cipher_state_sender();
 
     bool handshake_already_complete = session_info.handshake_context.is_complete();
-    bool rehandshake =
-        session_info.handshake_context.get_role() == noise::noise_role::INITIATOR
-        && session_info.batches_sent_number >= max_available_batches_number;
-
-    if (session_info.sent_session_retry && rehandshake)
-        throw noheap::runtime_error(this->buffer_owner, "Expects rehandshake.");
 
     // Calls callback(action) to init packet
     if (handshake_already_complete)
@@ -117,15 +109,8 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
     else
         session_info.handshake_context.init_packet(pckt);
 
-    // Adds retry unit places on unit 3 if limit of available batches after handshake
-    // has been reached
-    if (rehandshake) {
-        pckt->units[2].header.type      = unit_type::unit_type_enum::retry;
-        session_info.sent_session_retry = true;
-    }
-
-    check_protocol_compliance(handshake_already_complete, session_info.handshake_number,
-                              pckt->units[0].header.type, pckt->units[1].header.type);
+    check_protocol_compliance(session_info, pckt->units[0].header.type,
+                              pckt->units[1].header.type);
 
     for (std::uint64_t i = 0; i < pckt->units.size(); ++i) {
         unit_type &unit = pckt->units[i];
@@ -134,7 +119,7 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
         unit.header.key_iteration_number = session_info.sender_key_iteration_number;
 
         // Forces units to be dummy if necessary
-        if (i >= 2 && unit.header.type != unit_type::unit_type_enum::retry)
+        if (i >= 2)
             unit.header.type = unit_type::unit_type_enum::dummy;
 
         // Adds random padding
@@ -159,7 +144,6 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
                     payload_size = payload_data_size;
                     break;
                 case unit_type::unit_type_enum::dummy:
-                case unit_type::unit_type_enum::retry:
                     payload_size = 0;
                     break;
                 default:
@@ -290,7 +274,8 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
         // max_undecrypted_batches_number count packets after handshake
         if (!handshake_already_complete
             || session_info.undecrypted_batch_number == max_undecrypted_batches_number)
-            throw noheap::runtime_error("Failed to decrypt last batches.");
+            throw noheap::runtime_error(this->buffer_owner,
+                                        "Failed to decrypt last batches.");
         return;
     } else
         session_info.undecrypted_batch_number = 0;
@@ -301,9 +286,11 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
                   return el_left.header.number < el_right.header.number;
               });
 
+    check_protocol_compliance(session_info, pckt->units[0].header.type,
+                              pckt->units[1].header.type);
+
     ++session_info.receiver_units_number;
-    if (pckt->units[2].header.type == unit_type::unit_type_enum::retry)
-        session_info.received_session_retry = true;
+    ++session_info.batches_received_number;
 
     // Calls callback(action) to handle packet
     if (handshake_already_complete)
@@ -355,14 +342,12 @@ void essu::protocol_type::stop_handshake(session_info_type &session_info) const 
     }
 
     ++session_info.handshake_number;
-    session_info.sent_session_retry     = false;
-    session_info.received_session_retry = false;
 }
 bool essu::protocol_type::needs_to_rehandshake(
     const session_info_type &session_info) const {
     return session_info.handshake_context.get_role() == noise::noise_role::INITIATOR
-               ? session_info.sent_session_retry
-               : session_info.received_session_retry;
+               ? session_info.batches_sent_number >= max_available_batches_number
+               : session_info.batches_received_number >= max_available_batches_number;
 }
 noise::noise_role
     essu::protocol_type::get_role(const session_info_type &session_info) const {
@@ -379,18 +364,19 @@ essu::protocol_type::session_info_s_type::iterator
                         [&](auto el) { return el->addr == addr; });
 }
 void essu::protocol_type::check_protocol_compliance(
-    bool handshake_complete, std::uint64_t handshake_number,
-    unit_type::unit_type_enum batch_type,
+    const session_info_type &session_info, unit_type::unit_type_enum batch_type,
     unit_type::unit_type_enum payload_unit_two_type) const {
-    if (handshake_complete
+    if (session_info.handshake_context.is_complete()
         && (batch_type != unit_type::unit_type_enum::data
             || (payload_unit_two_type != unit_type::unit_type_enum::data
                 && payload_unit_two_type != unit_type::unit_type_enum::dummy)))
         throw noheap::runtime_error(this->buffer_owner, "Expected payload unit.");
 
-    if (handshake_number > max_available_handshakes_number)
+    if (session_info.handshake_number > max_available_handshakes_number)
         throw noheap::runtime_error(
             this->buffer_owner, "Limit of available handshakes number has been reached.");
+    if (needs_to_rehandshake(session_info))
+        throw noheap::runtime_error(this->buffer_owner, "Expected to rehandshake.");
 }
 noise::buffer_type<essu::header_data_size> essu::protocol_type::derive_header_obfs_key(
     typename noise_context_type::cipher_state &header_cipher_state,
