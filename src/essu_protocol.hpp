@@ -32,16 +32,16 @@ public:
 private:
     noise_handshake_context handshake_context;
 
-    std::size_t batches_sent_number;
-    std::size_t sender_units_number;
-    std::size_t receiver_units_number;
-    std::size_t sender_key_iteration_number;
-    std::size_t receiver_key_iteration_number;
-    std::size_t undecrypted_batch_number;
+    std::uint64_t batches_sent_number;
+    std::uint64_t sender_units_number;
+    std::uint64_t receiver_units_number;
+    std::uint64_t sender_key_iteration_number;
+    std::uint64_t receiver_key_iteration_number;
+    std::uint64_t undecrypted_batch_number;
 
-    std::size_t handshake_number       = 0;
-    bool        sent_session_retry     = false;
-    bool        received_session_retry = false;
+    std::uint64_t handshake_number       = 0;
+    bool          sent_session_retry     = false;
+    bool          received_session_retry = false;
 };
 
 struct protocol_type final
@@ -73,7 +73,8 @@ public:
 private:
     session_info_s_type::iterator
          find_session_info(network::buffer_address_type addr) const;
-    void check_protocol_compliance(bool handshake_complete, std::size_t handshake_number,
+    void check_protocol_compliance(bool                      handshake_complete,
+                                   std::uint64_t             handshake_number,
                                    unit_type::unit_type_enum batch_type,
                                    unit_type::unit_type_enum payload_unit_two_type) const;
     noise::buffer_type<header_data_size> derive_header_obfs_key(
@@ -126,7 +127,7 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
     check_protocol_compliance(handshake_already_complete, session_info.handshake_number,
                               pckt->units[0].header.type, pckt->units[1].header.type);
 
-    for (std::size_t i = 0; i < pckt->units.size(); ++i) {
+    for (std::uint64_t i = 0; i < pckt->units.size(); ++i) {
         unit_type &unit = pckt->units[i];
 
         unit.header.number               = session_info.sender_units_number++;
@@ -140,7 +141,7 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
         {
             // Determines payload size of the unit to define size of random
             // padding
-            std::size_t payload_size;
+            std::uint64_t payload_size;
             switch (unit.header.type) {
                 case unit_type::unit_type_enum::session_request:
                     payload_size = unit_config_type::hs1_size;
@@ -171,7 +172,7 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
             payload_cipher_state.input_buffer.set(
                 {reinterpret_cast<noheap::rbyte *>(unit.buffer.data()),
                  unit.buffer.size()},
-                std::clamp<std::size_t>(payload_size, 0, unit.buffer.size()));
+                std::clamp<std::uint64_t>(payload_size, 0, unit.buffer.size()));
             payload_cipher_state.pad();
         }
 
@@ -225,14 +226,14 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
     bool handshake_already_complete = session_info.handshake_context.is_complete();
 
     // Selects possible unit number
-    std::size_t count_decrypted_units = 0;
-    for (std::size_t possible_unit_number = session_info.receiver_units_number;
-         possible_unit_number
-         < session_info.receiver_units_number + batches_window_number;
-         ++possible_unit_number) {
+    std::uint64_t count_decrypted_units = 0;
+    for (; session_info.receiver_units_number
+           < session_info.receiver_units_number
+                 + batches_window_number * batch_units_number;
+         ++session_info.receiver_units_number) {
         // Generates header obfuscation key based on the possible_unit_number
-        auto obfs_key_tmp =
-            derive_header_obfs_key(header_cipher_state, possible_unit_number);
+        auto obfs_key_tmp = derive_header_obfs_key(header_cipher_state,
+                                                   session_info.receiver_units_number);
 
         for (auto &unit : pckt->units) {
             unit_type test_unit = unit;
@@ -245,7 +246,7 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
                            reinterpret_cast<noheap::rbyte *>(&test_unit.header),
                            std::bit_xor{});
 
-            if (test_unit.header.number != possible_unit_number)
+            if (test_unit.header.number != session_info.receiver_units_number)
                 continue;
 
             // Loop handling rekeys performed on the remote node.
@@ -300,9 +301,7 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
                   return el_left.header.number < el_right.header.number;
               });
 
-    // Sets next possible receiver units number
-    session_info.receiver_units_number =
-        pckt->units[pckt->units.size() - 1].header.number + 1;
+    ++session_info.receiver_units_number;
     if (pckt->units[2].header.type == unit_type::unit_type_enum::retry)
         session_info.received_session_retry = true;
 
@@ -356,6 +355,7 @@ void essu::protocol_type::stop_handshake(session_info_type &session_info) const 
     }
 
     ++session_info.handshake_number;
+    session_info.sent_session_retry     = false;
     session_info.received_session_retry = false;
 }
 bool essu::protocol_type::needs_to_rehandshake(
@@ -379,7 +379,7 @@ essu::protocol_type::session_info_s_type::iterator
                         [&](auto el) { return el->addr == addr; });
 }
 void essu::protocol_type::check_protocol_compliance(
-    bool handshake_complete, std::size_t handshake_number,
+    bool handshake_complete, std::uint64_t handshake_number,
     unit_type::unit_type_enum batch_type,
     unit_type::unit_type_enum payload_unit_two_type) const {
     if (handshake_complete

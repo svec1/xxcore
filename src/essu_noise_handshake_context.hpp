@@ -161,7 +161,7 @@ void essu::noise_handshake_context::process_packet(packet_type &&pckt) {
     auto &payload_unit = pckt->units[0];
 
     // Determines size of payload data
-    std::size_t payload_size;
+    std::uint64_t payload_size;
     if (status == status_enum::hs1)
         payload_size = unit_config_type::hs1_size;
     else if (status == status_enum::hs2)
