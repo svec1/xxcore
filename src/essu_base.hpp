@@ -51,6 +51,7 @@ public:
         hole_punch,
         data,
         dummy,
+        retry,
     };
     enum class flag_type_enum : noheap::ubyte {
         none = 0,
