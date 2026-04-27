@@ -217,9 +217,6 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
 
     bool handshake_already_complete = session_info.handshake_context.is_complete();
 
-    if (handshake_already_complete && session_info.needs_to_rehandshake)
-        throw noheap::runtime_error(this->buffer_owner, "Expected to rehandshake.");
-
     // Selects possible unit number
     std::uint64_t count_decrypted_units = 0;
     for (; session_info.receiver_units_number

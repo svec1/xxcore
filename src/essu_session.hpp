@@ -96,36 +96,41 @@ void essu::session<TStream>::register_connection() {
     running.store(true);
     asio::post(stream.get_executor(), [this] {
         std::optional<noheap::runtime_error> excp;
-        try {
-            decltype(auto)    protocol   = essu::wrapper_packet_type::get_protocol();
-            std::atomic<bool> io_running = true;
+        while (true) {
+            try {
+                decltype(auto)    protocol   = essu::wrapper_packet_type::get_protocol();
+                std::atomic<bool> io_running = true;
 
-            future_wrapper future_async_send([this, &io_running]() {
-                try {
-                    while (io_running.load() && this->running.load()
-                           && !protocol.needs_to_rehandshake(info))
-                        this->send(info);
-                } catch (...) {
-                    io_running.store(false);
-                    throw;
-                }
-            });
-            future_wrapper future_async_receive([this, &io_running]() {
-                try {
-                    while (io_running.load() && this->running.load()
-                           && !protocol.needs_to_rehandshake(info))
-                        receive(info);
-                } catch (...) {
-                    io_running.store(false);
-                    throw;
-                }
-            });
+                future_wrapper future_async_send([this, &io_running]() {
+                    try {
+                        while (io_running.load() && this->running.load()
+                               && !protocol.needs_to_rehandshake(info))
+                            this->send(info);
+                    } catch (...) {
+                        io_running.store(false);
+                        throw;
+                    }
+                });
+                future_wrapper future_async_receive([this, &io_running]() {
+                    try {
+                        while (io_running.load() && this->running.load()
+                               && !protocol.needs_to_rehandshake(info))
+                            receive(info);
+                    } catch (...) {
+                        io_running.store(false);
+                        throw;
+                    }
+                });
 
-            future_async_send.get();
-            future_async_receive.get();
+                future_async_send.get();
+                future_async_receive.get();
 
-        } catch (noheap::runtime_error &_excp) {
-            excp = _excp;
+            } catch (noheap::runtime_error &_excp) {
+                excp = _excp;
+                break;
+            }
+
+            establish_connection();
         }
 
         running.store(false);
