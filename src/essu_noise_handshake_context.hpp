@@ -8,7 +8,7 @@ public:
     using buffer_unique_value_type = noise::buffer_type<32>;
 
     enum class status_enum : std::size_t {
-        hs1,
+        hs1 = 0,
         hs2,
         hs3,
         is_complete,
@@ -278,8 +278,6 @@ void essu::noise_handshake_context::check_noise_action(noise::noise_action expec
 
     if (action == noise::noise_action::FAILED)
         throw noheap::runtime_error("Failed to handshake.");
-    else if (status == status_enum::is_complete)
-        throw noheap::runtime_error("Unexpected behaviour during the noise handshake.");
 
     if (action == expected)
         return;

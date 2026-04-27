@@ -103,18 +103,18 @@ void xxcore_service::run() {
 
     try {
         session_test.establish_connection();
-        session_test.register_stream_session();
-        log.to_all("Connection established.");
     } catch (...) {
-        session_test.get_running().store(false);
-        stream.close();
         io.stop();
+        stream.close();
         throw;
     }
+    log.to_all("Connection established.");
 
-    session_test.get_running().store(false);
-    stream.close();
+    session_test.register_connection();
+    session_test.wait();
+
     io.stop();
+    stream.close();
 
     for (auto &worker : workers)
         worker.get();

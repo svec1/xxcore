@@ -22,9 +22,9 @@ public:
 public:
     // Establishes connection with node(remote_addr): performs noise handshake
     void establish_connection();
-    void register_stream_session();
-
-    std::atomic<bool> &get_running() { return running; }
+    void register_connection();
+    void wait();
+    void terminate();
 
 private:
     template<typename... Args>
@@ -71,8 +71,8 @@ essu::session<TStream>::session(udp_stream                             &_stream,
 }
 template<network::Udp_stream TStream>
 void essu::session<TStream>::establish_connection() {
-    decltype(auto) protocol = essu::wrapper_packet_type::get_protocol();
     try {
+        decltype(auto) protocol = essu::wrapper_packet_type::get_protocol();
         // Performs noise handshake
         protocol.start_handshake(info);
         while (true) {
@@ -92,12 +92,13 @@ void essu::session<TStream>::establish_connection() {
 }
 
 template<network::Udp_stream TStream>
-void essu::session<TStream>::register_stream_session() {
+void essu::session<TStream>::register_connection() {
     running.store(true);
     asio::post(stream.get_executor(), [this] {
-        decltype(auto) protocol = essu::wrapper_packet_type::get_protocol();
-        while (running.load()) {
-            try {
+        std::optional<noheap::runtime_error> excp;
+        try {
+            decltype(auto) protocol = essu::wrapper_packet_type::get_protocol();
+            while (running.load()) {
                 std::atomic<bool> io_running = true;
 
                 future_wrapper future_async_send([this, &io_running]() {
@@ -125,18 +126,30 @@ void essu::session<TStream>::register_stream_session() {
                 future_async_receive.get();
 
                 // Sends a retry packet to signal the responder to rehandshake
-                if (protocol.get_role(info) == noise::noise_role::INITIATOR)
+                if (protocol.needs_to_rehandshake(info)
+                    && protocol.get_role(info) == noise::noise_role::INITIATOR)
                     send(info);
 
                 establish_connection();
-
-            } catch (noheap::runtime_error &excp) {
-                running.store(false);
-                this->throw_error("Connection terminated [{}]", excp.what());
             }
+        } catch (noheap::runtime_error &_excp) {
+            excp = _excp;
         }
+
         running.store(false);
+        running.notify_all();
+        if (excp)
+            this->throw_error("Connection terminated [{}]", excp->what());
+        this->throw_error("Connection terminated.");
     });
+}
+template<network::Udp_stream TStream>
+void essu::session<TStream>::wait() {
+    running.wait(true);
+}
+template<network::Udp_stream TStream>
+void essu::session<TStream>::terminate() {
+    running.store(false);
 }
 
 template<network::Udp_stream TStream>
