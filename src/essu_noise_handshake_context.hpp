@@ -102,7 +102,7 @@ void essu::noise_handshake_context::init_packet(packet_type &pckt) {
     // Gets noise message
     if (!fragmentation) {
         // Generates random value
-        if (status == status_enum::hs2) {
+        if (status == status_enum::hs3) {
             handshake_payload =
                 noheap::to_buffer<std::decay_t<decltype(handshake_payload)>>(
                     noheap::get_random_bytes<
@@ -187,7 +187,7 @@ void essu::noise_handshake_context::process_packet(packet_type &&pckt) {
                        buffer_handshake_message.begin() + ephemeral_obfs_key.size(),
                        ephemeral_obfs_key.begin(), buffer_handshake_message.begin(),
                        std::bit_xor{});
-    else if (status == status_enum::hs2)
+    else if (status == status_enum::hs3)
         // Sets buffer to get random value
         noise_ctx.get_handshake_payload_buffer().set(
             {handshake_payload.data(), handshake_payload.size()}, 0);

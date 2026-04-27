@@ -27,8 +27,7 @@ set(CNOISE_TESTS OFF)
 add_subdirectory(${CNOISE_DIR})	
 
 add_executable(${XXCORE} ${SRC_FILES})
-target_compile_options(${XXCORE} PRIVATE -fsanitize=undefined,address -Wall -Wextra -Wpedantic -pthread -O1 -fno-inline-functions -g)
-target_link_options(${XXCORE} PRIVATE -fsanitize=undefined,address)
+target_compile_options(${XXCORE} PRIVATE -Wall -Wextra -Wpedantic -pthread -O1 -fno-inline-functions -g)
 target_include_directories(
     ${XXCORE}
     PUBLIC 
