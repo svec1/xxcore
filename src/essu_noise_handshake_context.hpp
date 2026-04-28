@@ -57,15 +57,15 @@ private:
     noise::pre_shared_key_type       pre_shared_key;
     noise_context_type::keypair_type local_keypair;
     noise_context_type::dh_key_type  remote_public_key;
-    noise_context_type::dh_key_type  ephemeral_obfs_key;
 
-    typename noise::buffer_handshake_packet_type buffer_handshake_message;
+    typename noise::buffer_handshake_packet_type buffer_handshake_message{};
     std::size_t                                  offset_noise_handshake_unit;
     bool                                         fragmentation;
 
-    typename noise::buffer_handshake_payload_type        handshake_payload;
-    typename noise_context_type::hash_state::buffer_type handshake_hash;
-    buffer_unique_value_type                             unique_value;
+    noise_context_type::dh_key_type                      ephemeral_obfs_key{};
+    typename noise::buffer_handshake_payload_type        handshake_payload{};
+    typename noise_context_type::hash_state::buffer_type handshake_hash{};
+    buffer_unique_value_type                             unique_value{};
 };
 
 } // namespace essu
@@ -238,19 +238,19 @@ const essu::noise_context_type::dh_key_type &
 void essu::noise_handshake_context::start() {
     check_noise_action(noise::noise_action::NONE);
 
-    generate_pair_ephemeral_obfs_key();
-
     status                      = status_enum::hs1;
     offset_noise_handshake_unit = 0;
     fragmentation               = false;
     buffer_handshake_message    = {};
     handshake_payload           = {};
     handshake_hash              = {};
-    unique_value                = {};
-    ephemeral_obfs_key          = {};
     payload_cipher_state.init({});
     header_cipher_state_sender.init({});
     header_cipher_state_receiver.init({});
+
+    generate_pair_ephemeral_obfs_key();
+    unique_value       = {};
+    ephemeral_obfs_key = {};
 
     noise_ctx.init(role);
     noise_ctx.set_prologue(ext);
