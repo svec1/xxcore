@@ -238,12 +238,16 @@ const essu::noise_context_type::dh_key_type &
 void essu::noise_handshake_context::start() {
     check_noise_action(noise::noise_action::NONE);
 
+    generate_pair_ephemeral_obfs_key();
+
     status                      = status_enum::hs1;
     offset_noise_handshake_unit = 0;
     fragmentation               = false;
     buffer_handshake_message    = {};
     handshake_payload           = {};
     handshake_hash              = {};
+    unique_value                = {};
+    ephemeral_obfs_key          = {};
     payload_cipher_state.init({});
     header_cipher_state_sender.init({});
     header_cipher_state_receiver.init({});
@@ -254,7 +258,6 @@ void essu::noise_handshake_context::start() {
     noise_ctx.set_remote_public_key(remote_public_key);
     noise_ctx.set_pre_shared_key(pre_shared_key);
     noise_ctx.start();
-    generate_pair_ephemeral_obfs_key();
 }
 void essu::noise_handshake_context::stop() {
     check_noise_action(noise::noise_action::SPLIT);
@@ -296,17 +299,19 @@ void essu::noise_handshake_context::check_noise_action(noise::noise_action expec
 // Generates ephemeral header obfuscation key + ephmeral obfuscation key for hs1
 void essu::noise_handshake_context::generate_pair_ephemeral_obfs_key() {
     typename noise_context_type::dh_key_type public_key{};
-    const auto xor_public_key_with_addr = [&](const auto &addr) {
-        std::transform(public_key.begin(), public_key.begin() + addr.size(),
-                       reinterpret_cast<const noheap::rbyte *>(addr.begin()),
+    const auto xor_public_key_with_buffer = [&](const auto &buffer) {
+        std::transform(public_key.begin(), public_key.begin() + buffer.size(),
+                       reinterpret_cast<const noheap::rbyte *>(buffer.begin()),
                        public_key.begin(), std::bit_xor{});
     };
 
     // Derives shared key using own and remote public keys
     if (remote_public_key != noise_context_type::dh_key_type{}) {
-        xor_public_key_with_addr(local_keypair.pub);
-        xor_public_key_with_addr(remote_public_key);
+        xor_public_key_with_buffer(local_keypair.pub);
+        xor_public_key_with_buffer(remote_public_key);
     }
+    xor_public_key_with_buffer(unique_value);
+    xor_public_key_with_buffer(ephemeral_obfs_key);
 
     // Gets 32 bytes-hash of public key
     auto public_key_hash =
