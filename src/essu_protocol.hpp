@@ -41,8 +41,11 @@ private:
     std::uint64_t receiver_key_iteration_number;
     std::uint64_t undecrypted_batch_number;
 
-    std::uint64_t handshake_number     = 0;
-    bool          needs_to_rehandshake = false;
+    std::uint64_t handshake_number      = 0;
+    bool          was_sent_retry        = false;
+    bool          was_sent_retry_ok     = false;
+    bool          was_received_retry    = false;
+    bool          was_received_retry_ok = false;
 };
 
 struct protocol_type final
@@ -69,7 +72,9 @@ public:
 
     noise::noise_role   get_role(const session_info_type &session_info) const;
     noise::noise_action get_handshake_action(const session_info_type &session_info) const;
-    bool                needs_to_rehandshake(const session_info_type &session_info) const;
+    std::uint64_t       get_handshake_number(const session_info_type &session_info) const;
+    bool                can_send_packet(const session_info_type &session_info) const;
+    bool                can_receive_packet(const session_info_type &session_info) const;
 
 private:
     session_info_s_type::iterator
@@ -104,7 +109,7 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
 
     bool handshake_already_complete = session_info.handshake_context.is_complete();
 
-    if (handshake_already_complete && session_info.needs_to_rehandshake)
+    if (handshake_already_complete && can_send_packet(session_info))
         throw noheap::runtime_error(this->buffer_owner, "Expected to rehandshake.");
 
     // Calls callback(action) to init packet
@@ -115,8 +120,12 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
 
     if (session_info.handshake_context.get_role() == noise::noise_role::INITIATOR
         && session_info.batches_sent_number >= max_available_batches_number) {
-        pckt->units[2].header.type        = unit_type::unit_type_enum::retry;
-        session_info.needs_to_rehandshake = true;
+        pckt->units[2].header.type  = unit_type::unit_type_enum::retry;
+        session_info.was_sent_retry = true;
+    } else if (session_info.handshake_context.get_role() == noise::noise_role::RESPONDER
+               && session_info.was_received_retry) {
+        pckt->units[2].header.type     = unit_type::unit_type_enum::retry_ok;
+        session_info.was_sent_retry_ok = true;
     }
 
     check_protocol_compliance(handshake_already_complete, pckt->units[0].header.type,
@@ -155,6 +164,7 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
                     break;
                 case unit_type::unit_type_enum::dummy:
                 case unit_type::unit_type_enum::retry:
+                case unit_type::unit_type_enum::retry_ok:
                     payload_size = 0;
                     break;
                 default:
@@ -277,9 +287,6 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
     // If it was not possible to decrypt all units in batch
     if (count_decrypted_units != pckt->units.size()) {
         ++session_info.undecrypted_batch_number;
-        // If performs rehandshake
-        if (!handshake_already_complete && session_info.handshake_number > 0)
-            return;
 
         // If performs handshake or was failed to decrypt
         // max_undecrypted_batches_number count packets after handshake
@@ -301,7 +308,9 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
     ++session_info.batches_received_number;
 
     if (pckt->units[2].header.type == unit_type::unit_type_enum::retry)
-        session_info.needs_to_rehandshake = true;
+        session_info.was_received_retry = true;
+    else if (pckt->units[2].header.type == unit_type::unit_type_enum::retry_ok)
+        session_info.was_received_retry_ok = true;
 
     // Calls callback(action) to handle packet
     if (handshake_already_complete)
@@ -352,7 +361,6 @@ void essu::protocol_type::stop_handshake(session_info_type &session_info) const 
         session_info.receiver_units_number = value1;
     }
     ++session_info.handshake_number;
-    session_info.needs_to_rehandshake = false;
 }
 noise::noise_role
     essu::protocol_type::get_role(const session_info_type &session_info) const {
@@ -362,9 +370,16 @@ noise::noise_action essu::protocol_type::get_handshake_action(
     const session_info_type &session_info) const {
     return session_info.handshake_context.get_action();
 }
-bool essu::protocol_type::needs_to_rehandshake(
+std::uint64_t essu::protocol_type::get_handshake_number(
     const session_info_type &session_info) const {
-    return session_info.needs_to_rehandshake;
+    return session_info.handshake_number;
+}
+bool essu::protocol_type::can_send_packet(const session_info_type &session_info) const {
+    return !session_info.was_sent_retry && !session_info.was_sent_retry_ok;
+}
+bool essu::protocol_type::can_receive_packet(
+    const session_info_type &session_info) const {
+    return !session_info.was_received_retry && !session_info.was_received_retry_ok;
 }
 
 essu::protocol_type::session_info_s_type::iterator

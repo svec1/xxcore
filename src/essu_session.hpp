@@ -104,7 +104,7 @@ void essu::session<TStream>::register_connection() {
                 future_wrapper future_async_send([this, &io_running]() {
                     try {
                         while (io_running.load() && this->running.load()
-                               && !protocol.needs_to_rehandshake(info))
+                               && !protocol.can_send_packet(info))
                             this->send(info);
                     } catch (...) {
                         io_running.store(false);
@@ -114,7 +114,7 @@ void essu::session<TStream>::register_connection() {
                 future_wrapper future_async_receive([this, &io_running]() {
                     try {
                         while (io_running.load() && this->running.load()
-                               && !protocol.needs_to_rehandshake(info))
+                               && !protocol.can_receive_packet(info))
                             receive(info);
                     } catch (...) {
                         io_running.store(false);
@@ -125,6 +125,8 @@ void essu::session<TStream>::register_connection() {
                 future_async_send.get();
                 future_async_receive.get();
 
+                log.to_all("Number of rehandshake: {}",
+                           protocol.get_handshake_number(info));
                 establish_connection();
             } catch (noheap::runtime_error &_excp) {
                 excp = _excp;

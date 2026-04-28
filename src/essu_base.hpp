@@ -52,6 +52,7 @@ public:
         data,
         dummy,
         retry,
+        retry_ok,
     };
     enum class flag_type_enum : noheap::ubyte {
         none = 0,
