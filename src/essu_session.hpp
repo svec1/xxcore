@@ -96,7 +96,7 @@ void essu::session<TStream>::register_connection() {
     running.store(true);
     asio::post(stream.get_executor(), [this] {
         std::optional<noheap::runtime_error> excp;
-        while (true) {
+        while (running.load()) {
             try {
                 decltype(auto)    protocol   = essu::wrapper_packet_type::get_protocol();
                 std::atomic<bool> io_running = true;
@@ -125,12 +125,11 @@ void essu::session<TStream>::register_connection() {
                 future_async_send.get();
                 future_async_receive.get();
 
+                establish_connection();
             } catch (noheap::runtime_error &_excp) {
                 excp = _excp;
                 break;
             }
-
-            establish_connection();
         }
 
         running.store(false);

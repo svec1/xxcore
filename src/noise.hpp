@@ -543,8 +543,9 @@ void noise::noise_context<_config>::dump() {
 
     noise_handshakestate_free(handshakestate);
     cipher_st.dump();
-    handshake_buffer = {};
-    handshakestate   = nullptr;
+    handshake_buffer         = {};
+    handshake_payload_buffer = {};
+    handshakestate           = nullptr;
 }
 template<noise::noise_context_config _config>
 void noise::noise_context<_config>::fallback() {

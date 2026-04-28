@@ -59,7 +59,7 @@ private:
     noise_context_type::dh_key_type  remote_public_key;
     noise_context_type::dh_key_type  ephemeral_obfs_key;
 
-    typename noise::buffer_handshake_packet_type buffer_handshake_message{};
+    typename noise::buffer_handshake_packet_type buffer_handshake_message;
     std::size_t                                  offset_noise_handshake_unit;
     bool                                         fragmentation;
 
@@ -162,11 +162,14 @@ void essu::noise_handshake_context::process_packet(packet_type &&pckt) {
 
     // Determines size of payload data
     std::uint64_t payload_size;
-    if (status == status_enum::hs1)
+    if (status == status_enum::hs1
+        && payload_unit.header.type == unit_type::unit_type_enum::session_request)
         payload_size = unit_config_type::hs1_size;
-    else if (status == status_enum::hs2)
+    else if (status == status_enum::hs2
+             && payload_unit.header.type == unit_type::unit_type_enum::session_created)
         payload_size = unit_config_type::hs2_size;
-    else if (status == status_enum::hs3)
+    else if (status == status_enum::hs3
+             && payload_unit.header.type == unit_type::unit_type_enum::session_confirmed)
         payload_size = unit_config_type::hs3_size;
     else
         throw noheap::runtime_error("Unexpected behaviour during the noise handshake.");
@@ -174,7 +177,7 @@ void essu::noise_handshake_context::process_packet(packet_type &&pckt) {
     // Copies accepted unit to buffer of noise handshake message
     std::copy(payload_unit.buffer.begin(), payload_unit.buffer.end(),
               buffer_handshake_message.begin() + offset_noise_handshake_unit);
-    offset_noise_handshake_unit += payload_size;
+    offset_noise_handshake_unit += payload_unit.buffer.size();
 
     // If fragmentation
     if (payload_size >= payload_unit.buffer.size()

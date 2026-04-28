@@ -18,6 +18,7 @@ public:
 private:
     void reset_numbers() {
         batches_sent_number           = 0;
+        batches_received_number       = 0;
         sender_units_number           = 0;
         receiver_units_number         = 0;
         sender_key_iteration_number   = 0;
@@ -112,8 +113,9 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
     else
         session_info.handshake_context.init_packet(pckt);
 
-    if (session_info.batches_sent_number >= max_available_batches_number) {
-        pckt->units[3].header.type        = unit_type::unit_type_enum::retry;
+    if (session_info.handshake_context.get_role() == noise::noise_role::INITIATOR
+        && session_info.batches_sent_number >= max_available_batches_number) {
+        pckt->units[2].header.type        = unit_type::unit_type_enum::retry;
         session_info.needs_to_rehandshake = true;
     }
 
@@ -127,7 +129,7 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
         unit.header.key_iteration_number = session_info.sender_key_iteration_number;
 
         // Forces units to be dummy if necessary
-        if (i >= 2)
+        if (i >= 2 && unit.header.type != unit_type::unit_type_enum::retry)
             unit.header.type = unit_type::unit_type_enum::dummy;
 
         // Adds random padding
@@ -152,6 +154,7 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
                     payload_size = payload_data_size;
                     break;
                 case unit_type::unit_type_enum::dummy:
+                case unit_type::unit_type_enum::retry:
                     payload_size = 0;
                     break;
                 default:
@@ -349,6 +352,7 @@ void essu::protocol_type::stop_handshake(session_info_type &session_info) const 
         session_info.receiver_units_number = value1;
     }
     ++session_info.handshake_number;
+    session_info.needs_to_rehandshake = false;
 }
 noise::noise_role
     essu::protocol_type::get_role(const session_info_type &session_info) const {
