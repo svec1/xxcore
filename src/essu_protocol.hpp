@@ -11,12 +11,10 @@ struct session_info_type {
     friend struct protocol_type;
 
 public:
-    session_info_type(network::buffer_address_type _addr) : addr(_addr) {
-        reset_numbers();
-    }
+    session_info_type(network::buffer_address_type _addr) : addr(_addr) { reset_state(); }
 
 private:
-    void reset_numbers() {
+    void reset_state() {
         batches_sent_number           = 0;
         batches_received_number       = 0;
         sender_units_number           = 0;
@@ -24,6 +22,11 @@ private:
         sender_key_iteration_number   = 0;
         receiver_key_iteration_number = 0;
         undecrypted_batch_number      = 0;
+
+        was_sent_retry        = false;
+        was_sent_retry_ok     = false;
+        was_received_retry    = false;
+        was_received_retry_ok = false;
     }
 
 public:
@@ -41,11 +44,12 @@ private:
     std::uint64_t receiver_key_iteration_number;
     std::uint64_t undecrypted_batch_number;
 
-    std::uint64_t handshake_number      = 0;
-    bool          was_sent_retry        = false;
-    bool          was_sent_retry_ok     = false;
-    bool          was_received_retry    = false;
-    bool          was_received_retry_ok = false;
+    bool was_sent_retry        = false;
+    bool was_sent_retry_ok     = false;
+    bool was_received_retry    = false;
+    bool was_received_retry_ok = false;
+
+    std::uint64_t handshake_number = 0;
 };
 
 struct protocol_type final
@@ -109,7 +113,7 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
 
     bool handshake_already_complete = session_info.handshake_context.is_complete();
 
-    if (handshake_already_complete && can_send_packet(session_info))
+    if (handshake_already_complete && !can_send_packet(session_info))
         throw noheap::runtime_error(this->buffer_owner, "Expected to rehandshake.");
 
     // Calls callback(action) to init packet
@@ -138,7 +142,8 @@ void essu::protocol_type::prepare(packet_type &pckt, network::buffer_address_typ
         unit.header.key_iteration_number = session_info.sender_key_iteration_number;
 
         // Forces units to be dummy if necessary
-        if (i >= 2 && unit.header.type != unit_type::unit_type_enum::retry)
+        if (i >= 2 && unit.header.type != unit_type::unit_type_enum::retry
+            && unit.header.type != unit_type::unit_type_enum::retry_ok)
             unit.header.type = unit_type::unit_type_enum::dummy;
 
         // Adds random padding
@@ -229,6 +234,9 @@ void essu::protocol_type::handle(packet_type &pckt, network::buffer_address_type
         session_info.handshake_context.get_header_cipher_state_receiver();
 
     bool handshake_already_complete = session_info.handshake_context.is_complete();
+
+    if (handshake_already_complete && !can_receive_packet(session_info))
+        throw noheap::runtime_error(this->buffer_owner, "Expected to rehandshake.");
 
     // Selects possible unit number
     std::uint64_t count_decrypted_units = 0;
@@ -337,7 +345,7 @@ void essu::protocol_type::register_session_info(
                                 remote_public_key};
 }
 void essu::protocol_type::start_handshake(session_info_type &session_info) const {
-    session_info.reset_numbers();
+    session_info.reset_state();
     session_info.handshake_context.start();
 }
 void essu::protocol_type::stop_handshake(session_info_type &session_info) const {
