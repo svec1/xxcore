@@ -27,18 +27,12 @@ public:
     void terminate();
 
 private:
-    template<typename... Args>
-    void throw_error(std::format_string<Args...> format, Args &&...args);
-
-private:
     void send(const essu::session_info_type &session_info);
     void receive(const session_info_type &session_info);
 
-public:
+private:
     static constexpr noheap::log_impl::owner_impl::buffer_type buffer_owner =
         noheap::log_impl::create_owner("ESSU_SESSION");
-
-private:
     static constexpr log_handler log{buffer_owner};
 
 private:
@@ -50,7 +44,8 @@ private:
                            buffer_hex_remote_addr;
     const std::string_view hex_remote_addr{buffer_hex_remote_addr};
 
-    std::atomic<bool> running = false;
+    std::atomic<bool>        running = false;
+    std::atomic<std::size_t> io_stop = 0; // 2 - is full stop
 };
 } // namespace essu
 
@@ -73,95 +68,61 @@ template<network::Udp_stream TStream>
 void essu::session<TStream>::establish_connection() {
     try {
         decltype(auto) protocol = essu::wrapper_packet_type::get_protocol();
+        decltype(protocol.get_handshake_action(info)) action;
+
         // Performs noise handshake
         protocol.start_handshake(info);
-        while (true) {
-            auto action = protocol.get_handshake_action(info);
+        while ((action = protocol.get_handshake_action(info))
+               != noise::noise_action::SPLIT) {
             if (action == noise::noise_action::WRITE_MESSAGE)
                 send(info);
             else if (action == noise::noise_action::READ_MESSAGE)
                 receive(info);
-            else
-                break;
         }
-
         protocol.stop_handshake(info);
-    } catch (noheap::runtime_error &excp) {
-        this->throw_error("Failed to establish connection [{}]", excp.what());
+
+    } catch (const noheap::runtime_error &excp) {
+        log.throw_exception<noheap::runtime_error>("Failed to establish connection [{}]",
+                                                   excp.what());
     }
 }
 
 template<network::Udp_stream TStream>
 void essu::session<TStream>::register_connection() {
+    const auto async_stream_op = [this](auto &&stream_op) {
+        auto io_stop_increment = scope_guard([this] {
+            ++this->io_stop;
+            this->io_stop.notify_all();
+            this->running.store(false);
+        });
+
+        stream_op();
+    };
+
+    io_stop.store(0);
     running.store(true);
-    asio::post(stream.get_executor(), [this] {
-        std::optional<noheap::runtime_error> excp;
-        while (running.load()) {
-            try {
-                decltype(auto)    protocol   = essu::wrapper_packet_type::get_protocol();
-                std::atomic<bool> io_running = true;
 
-                future_wrapper future_async_send([this, &io_running]() {
-                    try {
-                        while (io_running.load() && this->running.load()
-                               && protocol.can_send_packet(info))
-                            this->send(info);
-                    } catch (...) {
-                        io_running.store(false);
-                        throw;
-                    }
-                });
-                future_wrapper future_async_receive([this, &io_running]() {
-                    try {
-                        while (io_running.load() && this->running.load()
-                               && protocol.can_receive_packet(info))
-                            receive(info);
-                    } catch (...) {
-                        io_running.store(false);
-                        throw;
-                    }
-                });
-
-                future_async_send.get();
-                future_async_receive.get();
-
-                log.to_all("Number of rehandshake: {}",
-                           protocol.get_handshake_number(info));
-                establish_connection();
-            } catch (noheap::runtime_error &_excp) {
-                excp = _excp;
-                break;
-            }
-        }
-
-        running.store(false);
-        running.notify_all();
-        if (excp)
-            this->throw_error("Connection terminated [{}]", excp->what());
-        this->throw_error("Connection terminated.");
-    });
+    asio::post(stream.get_executor(), std::bind(async_stream_op, [this] {
+                   while (
+                       this->running.load()
+                       && essu::wrapper_packet_type::get_protocol().can_send_packet(info))
+                       this->send(info);
+               }));
+    asio::post(
+        stream.get_executor(), std::bind(async_stream_op, [this] {
+            while (this->running.load()
+                   && essu::wrapper_packet_type::get_protocol().can_receive_packet(info))
+                this->receive(info);
+        }));
 }
 template<network::Udp_stream TStream>
 void essu::session<TStream>::wait() {
-    running.wait(true);
+    io_stop.wait(0);
+    io_stop.wait(1);
 }
 template<network::Udp_stream TStream>
 void essu::session<TStream>::terminate() {
     running.store(false);
-}
-
-template<network::Udp_stream TStream>
-template<typename... Args>
-void essu::session<TStream>::throw_error(std::format_string<Args...> format,
-                                         Args &&...args) {
-    noheap::buffer_chars_type<noheap::runtime_error::buffer_size
-                              - noheap::buffer_size<decltype(buffer_owner)>
-                              - noheap::buffer_size<decltype(buffer_hex_remote_addr)>>
-        buffer_format{};
-    std::format_to_n(buffer_format.begin(), buffer_format.size(), format,
-                     std::forward<Args>(args)...);
-    throw noheap::runtime_error(buffer_owner, "{}: {}", hex_remote_addr,
-                                std::string_view(buffer_format));
 }
 
 template<network::Udp_stream TStream>
@@ -174,7 +135,7 @@ template<network::Udp_stream TStream>
 void essu::session<TStream>::receive(const session_info_type &session_info) {
     if (!stream.template receive_from<essu::wrapper_packet_type>(
             TStream::get_address_object(session_info.addr)))
-        throw noheap::runtime_error("Timeout has been reached.");
+        log.throw_exception<noheap::runtime_error>("Timeout has been reached.");
 }
 
 #endif

@@ -263,6 +263,9 @@ private:
     bool owner_set;
 };
 
+template<typename T>
+concept Derived_from_runtime_error = std::derived_from<T, runtime_error>;
+
 template<std::size_t _buffer_size>
 struct pseudoheap_monotonic_array;
 
@@ -613,8 +616,16 @@ public:
         });
     }
 
-    template<output_type async = output_type::flush, typename... Args>
-    void exception_to_all(noheap::runtime_error &excp) const {
+    template<noheap::Derived_from_runtime_error TExcp = noheap::runtime_error,
+             typename... Args>
+    [[noreturn]] void throw_exception(std::format_string<Args...> format,
+                                      Args &&...args) const {
+        throw TExcp(this->buffer_owner, format, std::forward<Args>(args)...);
+    }
+
+    template<output_type                        async = output_type::flush,
+             noheap::Derived_from_runtime_error TExcp>
+    void exception_to_all(const TExcp &excp) const {
         std::for_each(out_streams.begin(), out_streams.end(), [&](std::size_t outstream) {
             if (!outstream)
                 return;
@@ -712,5 +723,19 @@ private:
 
 template<typename Func>
 future_wrapper(Func &&func) -> future_wrapper<std::invoke_result_t<std::decay_t<Func>>>;
+
+class scope_guard {
+    using callback_type = std::function<void()>;
+
+public:
+    scope_guard(callback_type &&_callback) : callback(_callback) {}
+    scope_guard(scope_guard &&other) : callback(other.callback) { other.callback = {}; }
+    scope_guard(const scope_guard &other) = delete;
+
+    ~scope_guard() { callback(); }
+
+private:
+    callback_type callback;
+};
 
 #endif

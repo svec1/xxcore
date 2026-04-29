@@ -35,6 +35,7 @@ public:
     typename noise_context_type::cipher_state &get_payload_cipher_state();
     typename noise_context_type::cipher_state &get_header_cipher_state_sender();
     typename noise_context_type::cipher_state &get_header_cipher_state_receiver();
+    typename noise_context_type::random_state &get_random_state();
 
     void start();
     void stop();
@@ -45,12 +46,18 @@ private:
     void generate_posthandshake_unique_values();
 
 private:
+    static constexpr noheap::log_impl::owner_impl::buffer_type buffer_owner =
+        noheap::log_impl::create_owner("NOISE_HANDSHAKE_CONTEXT");
+    static constexpr log_handler log{buffer_owner};
+
+private:
     status_enum status;
 
     noise_context_type                        noise_ctx;
     typename noise_context_type::cipher_state payload_cipher_state;
     typename noise_context_type::cipher_state header_cipher_state_sender;
     typename noise_context_type::cipher_state header_cipher_state_receiver;
+    typename noise_context_type::random_state random_state;
 
     noise::noise_role                role;
     noise::prologue_extention_type   ext;
@@ -140,7 +147,7 @@ void essu::noise_handshake_context::init_packet(packet_type &pckt) {
     else if (status == status_enum::hs3)
         payload_unit.header.type = unit_type::unit_type_enum::session_confirmed;
     else
-        throw noheap::runtime_error("Unexpected behaviour during the noise handshake.");
+        this->log.throw_exception("Unexpected behaviour during the noise handshake.");
 
     // If fragmentation
     if (offset_noise_handshake_unit < noise_ctx.get_handshake_buffer().get().size) {
@@ -172,7 +179,7 @@ void essu::noise_handshake_context::process_packet(packet_type &&pckt) {
              && payload_unit.header.type == unit_type::unit_type_enum::session_confirmed)
         payload_size = unit_config_type::hs3_size;
     else
-        throw noheap::runtime_error("Unexpected behaviour during the noise handshake.");
+        this->log.throw_exception("Unexpected behaviour during the noise handshake.");
 
     // Copies accepted unit to buffer of noise handshake message
     std::copy(payload_unit.buffer.begin(), payload_unit.buffer.end(),
@@ -217,6 +224,10 @@ typename essu::noise_context_type::cipher_state &
     essu::noise_handshake_context::get_header_cipher_state_receiver() {
     return header_cipher_state_receiver;
 }
+typename essu::noise_context_type::random_state &
+    essu::noise_handshake_context::get_random_state() {
+    return random_state;
+}
 bool essu::noise_handshake_context::is_complete() const {
     return status == status_enum::is_complete;
 }
@@ -247,6 +258,7 @@ void essu::noise_handshake_context::start() {
     payload_cipher_state.init({});
     header_cipher_state_sender.init({});
     header_cipher_state_receiver.init({});
+    random_state.reseed();
 
     generate_pair_ephemeral_obfs_key();
     unique_value       = {};
@@ -268,7 +280,7 @@ void essu::noise_handshake_context::stop() {
         if (remote_public_key == noise_context_type::dh_key_type{})
             remote_public_key = handshake_remote_public_key;
         else
-            throw noheap::runtime_error("Remote public key from handshake is invalid.");
+            this->log.throw_exception("Remote public key from handshake is invalid.");
     }
 
     handshake_hash = noise_ctx.get_handshake_hash();
@@ -283,17 +295,17 @@ void essu::noise_handshake_context::check_noise_action(noise::noise_action expec
     auto action = noise_ctx.get_action();
 
     if (action == noise::noise_action::FAILED)
-        throw noheap::runtime_error("Failed to handshake.");
+        this->log.throw_exception("Failed to handshake.");
 
     if (action == expected)
         return;
 
     if (action == noise::noise_action::WRITE_MESSAGE)
-        throw noheap::runtime_error("Expected message to be sent.");
+        this->log.throw_exception("Expected message to be sent.");
     else if (action == noise::noise_action::READ_MESSAGE)
-        throw noheap::runtime_error("Expected message to be received.");
+        this->log.throw_exception("Expected message to be received.");
     else
-        throw noheap::runtime_error("Handshake already completed.");
+        this->log.throw_exception("Handshake already completed.");
 }
 
 // Generates ephemeral header obfuscation key + ephmeral obfuscation key for hs1
@@ -324,8 +336,8 @@ void essu::noise_handshake_context::generate_pair_ephemeral_obfs_key() {
                                      keystream{};
     noise_context_type::cipher_state cipher_tmp;
     cipher_tmp.set_encrypt_key(public_key_hash);
-    cipher_tmp.input_buffer.set({keystream.data(), keystream.size()},
-                                keystream.size() - noise_context_type::mac_size);
+    cipher_tmp.encrypt_buffer.set({keystream.data(), keystream.size()},
+                                  keystream.size() - noise_context_type::mac_size);
     cipher_tmp.encrypt({});
 
     auto header_obfs_key1 =
@@ -368,8 +380,8 @@ void essu::noise_handshake_context::generate_posthandshake_unique_values() {
     cipher_tmp.set_encrypt_key(
         noheap::clip_buffer<noheap::buffer_size<noise_context_type::dh_key_type>, 0>(
             output_tmp));
-    cipher_tmp.input_buffer.set({keystream.data(), keystream.size()},
-                                keystream.size() - noise_context_type::mac_size);
+    cipher_tmp.encrypt_buffer.set({keystream.data(), keystream.size()},
+                                  keystream.size() - noise_context_type::mac_size);
     cipher_tmp.encrypt({});
 
     auto header_obfs_key1 =

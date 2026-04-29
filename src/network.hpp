@@ -485,7 +485,7 @@ void udp_stream<Action, v>::handle_error(const system::error_code &ec) {
     if (!ec.value())
         return;
 
-    throw noheap::runtime_error(buffer_owner, "Network error: {}", ec.message());
+    log.throw_exception("Network error: {}", ec.message());
 }
 
 } // namespace network

@@ -215,6 +215,27 @@ public:
         NoiseBuffer buffer{};
     };
 
+    struct random_state {
+    public:
+        random_state();
+
+        random_state(random_state &&)                 = delete;
+        random_state(const random_state &)            = delete;
+        random_state &operator=(const random_state &) = delete;
+
+        ~random_state();
+
+    public:
+        void pad();
+        void reseed();
+
+    public:
+        noise_buffer_view padding_buffer{};
+
+    private:
+        NoiseRandState *randstate = nullptr;
+    };
+
     struct cipher_state {
         friend class noise::noise_context<_config>;
 
@@ -233,7 +254,6 @@ public:
 
         void encrypt(std::span<noheap::rbyte> buffer_ad);
         void decrypt(std::span<noheap::rbyte> buffer_ad);
-        void pad();
         void rekey_encrypt();
         void rekey_decrypt();
 
@@ -250,13 +270,12 @@ public:
         void check_decrypt_key() const;
 
     public:
-        noise_buffer_view input_buffer{};
-        noise_buffer_view output_buffer{};
+        noise_buffer_view encrypt_buffer{};
+        noise_buffer_view decrypt_buffer{};
 
     private:
         NoiseCipherState *encrypt_state = nullptr;
         NoiseCipherState *decrypt_state = nullptr;
-        NoiseRandState   *randstate     = nullptr;
     };
 
     struct hash_state {
@@ -339,6 +358,34 @@ private:
 };
 } // namespace noise
 
+// Random state
+template<noise::noise_context_config _config>
+noise::noise_context<_config>::random_state::random_state() {
+    std::size_t ret;
+    if ((ret = noise_randstate_new(&randstate)) != NOISE_ERROR_NONE)
+        handle_error(ret, "Failed to init random state.");
+}
+template<noise::noise_context_config _config>
+noise::noise_context<_config>::random_state::~random_state() {
+    noise_randstate_free(randstate);
+}
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::random_state::pad() {
+    auto &noise_buffer = padding_buffer.get();
+
+    std::size_t ret;
+    if ((ret = noise_randstate_pad(randstate, noise_buffer.data, noise_buffer.size,
+                                   noise_buffer.max_size, NOISE_PADDING_RANDOM))
+        != NOISE_ERROR_NONE)
+        handle_error(ret, "Failed to pad.");
+}
+template<noise::noise_context_config _config>
+void noise::noise_context<_config>::random_state::reseed() {
+    std::size_t ret;
+    if ((ret = noise_randstate_reseed(randstate)) != NOISE_ERROR_NONE)
+        handle_error(ret, "Failed to reseed.");
+}
+
 // Cipher state
 template<noise::noise_context_config _config>
 noise::noise_context<_config>::cipher_state::cipher_state() {
@@ -351,8 +398,6 @@ noise::noise_context<_config>::cipher_state::cipher_state() {
                                            static_cast<std::uint16_t>(config.cipher)))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to init decrypt cipher state.");
-    if ((ret = noise_randstate_new(&randstate)) != NOISE_ERROR_NONE)
-        handle_error(ret, "Failed to init randstate.");
 }
 template<noise::noise_context_config _config>
 void noise::noise_context<_config>::cipher_state::init(cipher_state &&other) {
@@ -379,7 +424,6 @@ void noise::noise_context<_config>::cipher_state::dump() {
 template<noise::noise_context_config _config>
 noise::noise_context<_config>::cipher_state::~cipher_state() {
     dump();
-    noise_randstate_free(randstate);
 }
 template<noise::noise_context_config _config>
 void noise::noise_context<_config>::cipher_state::encrypt(
@@ -389,7 +433,7 @@ void noise::noise_context<_config>::cipher_state::encrypt(
 
     if ((ret = noise_cipherstate_encrypt_with_ad(
              encrypt_state, reinterpret_cast<noheap::ubyte *>(buffer_ad.data()),
-             buffer_ad.size(), &input_buffer.get()))
+             buffer_ad.size(), &encrypt_buffer.get()))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to encrypt.");
 }
@@ -400,19 +444,9 @@ void noise::noise_context<_config>::cipher_state::decrypt(
     std::size_t ret;
     if ((ret = noise_cipherstate_decrypt_with_ad(
              decrypt_state, reinterpret_cast<noheap::ubyte *>(buffer_ad.data()),
-             buffer_ad.size(), &output_buffer.get()))
+             buffer_ad.size(), &decrypt_buffer.get()))
         != NOISE_ERROR_NONE)
         handle_error(ret, "Failed to decrypt.");
-}
-template<noise::noise_context_config _config>
-void noise::noise_context<_config>::cipher_state::pad() {
-    auto &noise_buffer = input_buffer.get();
-
-    std::size_t ret;
-    if ((ret = noise_randstate_pad(randstate, noise_buffer.data, noise_buffer.size,
-                                   noise_buffer.max_size, NOISE_PADDING_RANDOM))
-        != NOISE_ERROR_NONE)
-        handle_error(ret, "Failed to pad.");
 }
 template<noise::noise_context_config _config>
 void noise::noise_context<_config>::cipher_state::rekey_encrypt() {
@@ -747,10 +781,9 @@ void noise::noise_context<_config>::handle_error(std::size_t      error,
     if (error) {
         noheap::buffer_type<char, 64> buffer_noise_error{};
         noise_strerror(error, buffer_noise_error.data(), buffer_noise_error.size());
-        throw noheap::runtime_error(buffer_owner, "{} {}", extention_error,
-                                    buffer_noise_error.data());
+        log.throw_exception("{} {}", extention_error, buffer_noise_error.data());
     } else
-        throw noheap::runtime_error(buffer_owner, "{}", extention_error);
+        log.throw_exception("{}", extention_error);
 }
 
 #endif
