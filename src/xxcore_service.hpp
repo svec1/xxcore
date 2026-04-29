@@ -86,35 +86,34 @@ xxcore_service::xxcore_service(address_type &&_addr, asio::ip::port_type _port)
 }
 
 void xxcore_service::run() {
+    noheap::buffer_type<future_wrapper<void>, workers_number>  workers;
     asio::executor_work_guard<asio::io_context::executor_type> work_guard(
         io.get_executor());
 
-    noheap::buffer_type<future_wrapper<void>, workers_number> workers;
     for (auto &worker : workers)
         worker = typename std::decay_t<decltype(worker)>{[this] { this->io.run(); }};
 
-    stream.register_async_send();
-    stream.register_async_receive();
+    {
+        scope_guard session_stop([&] {
+            io.stop();
+            stream.close();
+        });
 
-    // Tests
-    session_type session_test(stream, addr, config.role, {}, config.pre_shared_key,
-                              {config.local_private_key, config.local_public_key},
-                              config.remote_public_key);
+        stream.register_async_send();
+        stream.register_async_receive();
 
-    try {
-        session_test.establish_connection();
-    } catch (...) {
-        io.stop();
-        stream.close();
-        throw;
+        // Tests
+        session_type session_test(stream, addr, config.role, {}, config.pre_shared_key,
+                                  {config.local_private_key, config.local_public_key},
+                                  config.remote_public_key);
+
+        while (true) {
+            session_test.establish_connection();
+            session_test.register_connection();
+
+            session_test.wait();
+        }
     }
-    log.to_all("Connection established.");
-
-    session_test.register_connection();
-    session_test.wait();
-
-    io.stop();
-    stream.close();
 
     for (auto &worker : workers)
         worker.get();

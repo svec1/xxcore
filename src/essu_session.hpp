@@ -26,6 +26,8 @@ public:
     void wait();
     void terminate();
 
+    bool is_running() const;
+
 private:
     void send(const essu::session_info_type &session_info);
     void receive(const session_info_type &session_info);
@@ -81,6 +83,7 @@ void essu::session<TStream>::establish_connection() {
         }
         protocol.stop_handshake(info);
 
+        log.to_all("Number of handshake: {}", protocol.get_handshake_number(info));
     } catch (const noheap::runtime_error &excp) {
         log.throw_exception<noheap::runtime_error>("Failed to establish connection [{}]",
                                                    excp.what());
@@ -90,7 +93,7 @@ void essu::session<TStream>::establish_connection() {
 template<network::Udp_stream TStream>
 void essu::session<TStream>::register_connection() {
     const auto async_stream_op = [this](auto &&stream_op) {
-        auto io_stop_increment = scope_guard([this] {
+        scope_guard io_stop_increment([this] {
             ++this->io_stop;
             this->io_stop.notify_all();
             this->running.store(false);
@@ -123,6 +126,10 @@ void essu::session<TStream>::wait() {
 template<network::Udp_stream TStream>
 void essu::session<TStream>::terminate() {
     running.store(false);
+}
+template<network::Udp_stream TStream>
+bool essu::session<TStream>::is_running() const {
+    return running.load();
 }
 
 template<network::Udp_stream TStream>
