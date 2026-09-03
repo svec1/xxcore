@@ -1,6 +1,8 @@
 #ifndef UTILS_HPP
 #define UTILS_HPP
 
+#define _GNU_SOURCE
+
 #include <unistd.h>
 
 #include <algorithm>

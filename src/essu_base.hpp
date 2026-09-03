@@ -5,10 +5,30 @@
 #include "noise.hpp"
 #include "utils.hpp"
 
-// TODO:
 // Protocol description:
-// 1. Establishing connection between two nodes have to establish handshake NoisePSK_XXhfs_25519+MLKEM768_XChaChaPoly_SHA3512.
-//
+// ESSU-Protocol is encrypted deterministic-size uncorrelated semi-asynchronous not-reliable UDP protocol. 
+// 1. Each packet contains batch_units_number units:
+// 	- 1,2 might contain payload data
+// 	- 3 is control unit which contain a control notification in the header field and random padding. 
+// 	- 4 is dummy unit which contain only random padding.
+//    NOTE: these units will be mixed together before the sending and restored in order after the receiving.
+// 2. Establishing connection between two nodes have to establish handshake NoisePSK_XXhfs_25519+MLKEM768_XChaChaPoly_SHA3512.
+//    The starting of the handshake is the sending a session_request packet.
+//    The result of the handshake is the sending a session_confirmed packet and derived:
+//    	- a header_cipher_state for encrypt header data of unit.
+//    	- a payload_cipher_state for encrypt payload data of unit.
+//      - a handshake_payload for double ratchet.
+//      - a handshake_id for IP rotation, which changes from handshake to handshake.
+//    The handshake_payload is a payload data of session_confirmed packet. It will be updated from handshake to handshake - will derive from new and old version. 
+//    The handshake packet will be sent with a [sent_handshake_batch_factor]% factor 
+//    NOTE: When node 1(initiator) sent session_confirmed packet, node 2 still might send packets used a prehandshake header_cipher_state for some time.
+//    	    Then node 1 will has to skip those packets(max count is skip_batch_window_number) until it decrypts at least one.
+// 3. After establishing connection, both nodes will have to fulfill conditions:
+//    	- Rekey of payload_cipher_state every unit_per_rekey_number packets.
+//    	- One of the node that reached max_available_batch_number for batch_sent_number has to send a packet with retry control unit.
+//      - This node will have to continue send new packets until receiver sends the same packet
+//        after that receiver needs to skip packets until it receives a session_request packet to establish handshake again.
+// NOTE: Max count of available handshake is max_available_handshake_number.
 namespace essu {
 constexpr std::size_t timeout_ms                 = 7500;
 constexpr std::size_t packet_size                = 1376;
